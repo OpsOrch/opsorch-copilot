@@ -1,0 +1,25 @@
+{
+  "name": "opsorch-copilot",
+  "version": "0.1.0",
+  "description": "OpsOrch Copilot runtime orchestration (LLM + MCP tool loop).",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc --noEmit false",
+    "dev": "node --loader ts-node/esm src/server.ts",
+    "lint": "tsc --noEmit",
+    "test": "NODE_ENV=test node --test --loader ts-node/esm tests/*.test.ts",
+    "start": "node --loader ts-node/esm src/server.ts"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.5",
+    "@types/node": "^22.9.4",
+    "supertest": "^7.0.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.6.3"
+  }
+}
