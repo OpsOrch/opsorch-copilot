@@ -47,7 +47,7 @@ OpsOrch Copilot is the AI runtime that orchestrates reasoning, prompting, and to
 ### HTTP API (console/CLI integration)
 
 - Start server: `npm start` (env: `PORT` default 6060, `MCP_URL` default `http://localhost:7070/mcp`).
-- `POST /chat` – body `{ "message": "<question>", "conversationId?": "<reuse-id>" }`
-  - Response: `{ "conversationId": "<id>", "responseId": "<turn?>", "answer": { conclusion, evidence?, missing?, conversationId?, responseId? } }`
-  - Stateless: no server-side conversation store. If `conversationId` is not provided, the response uses the provider IDs (`conversationId`/`responseId`, e.g., completion id) so callers can persist and reuse them.
+- `POST /chat` – body `{ "message": "<question>", "chatId?": "<reuse-id>" }`
+  - Response: `{ "chatId": "<id>", "answer": { conclusion, evidence?, missing?, chatId? } }`
+  - Stateless: no server-side conversation store. If `chatId` is not provided, the response echoes provider-supplied IDs so callers can persist and reuse them.
 - `GET /health` – liveness check: `{ "status": "ok" }`

@@ -11,12 +11,19 @@ export type Tool = {
 export type ToolCall = {
   name: string;
   arguments: JsonObject;
+  callId?: string;
 };
 
 export type ToolResult = {
   name: string;
   result: JsonValue;
   arguments?: JsonObject; // input arguments used for the call
+  callId?: string;
+};
+
+export type ToolOutputSubmission = {
+  callId: string;
+  output: JsonValue;
 };
 
 export type LlmMessage =
@@ -26,12 +33,16 @@ export type LlmMessage =
   | { role: 'tool'; toolName: string; content: string };
 
 export interface LlmClient {
-  chat(messages: LlmMessage[], tools: Tool[]): Promise<{
+  chat(
+    messages: LlmMessage[],
+    tools: Tool[],
+    opts?: { chatId?: string;}
+  ): Promise<{
     content: string;
     toolCalls: ToolCall[];
-    conversationId?: string;
-    responseId?: string; // provider turn id (e.g., chat completion id)
+    chatId: string;
   }>;
+
 }
 
 export type CopilotAnswer = {
@@ -41,8 +52,7 @@ export type CopilotAnswer = {
   references?: CopilotReferences;  // ids/time ranges the console can deep link to
   data?: any;                      // raw results from tool calls
   confidence?: number;             // 0–1 probability
-  conversationId?: string;         // session continuity
-  responseId?: string;             // message continuity
+  chatId: string;                 // session continuity
 };
 
 export type CopilotReferences = {
@@ -57,7 +67,7 @@ export type MetricReference = {
   expression: string;
   start?: string;
   end?: string;
-  step?: string;
+  step?: number;
   scope?: string;
 };
 
