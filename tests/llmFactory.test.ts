@@ -1,0 +1,74 @@
+import assert from 'node:assert/strict';
+import { test, beforeEach, afterEach } from 'node:test';
+import { createLlmFromEnv } from '../src/llmFactory.js';
+import { OpenAiLlm } from '../src/llms/openai.js';
+import { AnthropicLlm } from '../src/llms/anthropic.js';
+import { MockLlm } from '../src/llms/mock.js';
+import { NullLlm } from '../src/llms/null.js';
+
+test('llmFactory', async (t) => {
+    const originalEnv = { ...process.env };
+
+    beforeEach(() => {
+        process.env = { ...originalEnv };
+        // Clear relevant env vars to ensure clean state
+        delete process.env.LLM_PROVIDER;
+        delete process.env.OPENAI_API_KEY;
+        delete process.env.ANTHROPIC_API_KEY;
+    });
+
+    afterEach(() => {
+        process.env = originalEnv;
+    });
+
+    await t.test('defaults to openai (mock) if no provider set and no key', () => {
+        const llm = createLlmFromEnv();
+        assert.ok(llm instanceof MockLlm, 'Should fallback to MockLlm when key is missing for default provider');
+    });
+
+    await t.test('creates OpenAiLlm when provider is openai and key is present', () => {
+        process.env.LLM_PROVIDER = 'openai';
+        process.env.OPENAI_API_KEY = 'sk-test-key';
+        const llm = createLlmFromEnv();
+        assert.ok(llm instanceof OpenAiLlm);
+    });
+
+    await t.test('creates MockLlm when provider is openai but key is missing', () => {
+        process.env.LLM_PROVIDER = 'openai';
+        delete process.env.OPENAI_API_KEY;
+        const llm = createLlmFromEnv();
+        assert.ok(llm instanceof MockLlm);
+    });
+
+    await t.test('creates AnthropicLlm when provider is anthropic and key is present', () => {
+        process.env.LLM_PROVIDER = 'anthropic';
+        process.env.ANTHROPIC_API_KEY = 'sk-ant-test-key';
+        const llm = createLlmFromEnv();
+        assert.ok(llm instanceof AnthropicLlm);
+    });
+
+    await t.test('creates MockLlm when provider is anthropic but key is missing', () => {
+        process.env.LLM_PROVIDER = 'anthropic';
+        delete process.env.ANTHROPIC_API_KEY;
+        const llm = createLlmFromEnv();
+        assert.ok(llm instanceof MockLlm);
+    });
+
+    await t.test('creates MockLlm when provider is mock', () => {
+        process.env.LLM_PROVIDER = 'mock';
+        const llm = createLlmFromEnv();
+        assert.ok(llm instanceof MockLlm);
+    });
+
+    await t.test('creates NullLlm for unknown provider', () => {
+        process.env.LLM_PROVIDER = 'unknown-provider';
+        const llm = createLlmFromEnv();
+        assert.ok(llm instanceof NullLlm);
+    });
+
+    await t.test('is case insensitive for provider name', () => {
+        process.env.LLM_PROVIDER = 'MOCK';
+        const llm = createLlmFromEnv();
+        assert.ok(llm instanceof MockLlm);
+    });
+});

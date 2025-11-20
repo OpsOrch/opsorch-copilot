@@ -1,36 +1,6 @@
 import express from 'express';
-import { randomUUID } from 'node:crypto';
 import { CopilotEngine } from './engine/copilotEngine.js';
-import { MockLlmClient } from './llms/mock.js';
-import { OpenAiLlm } from './llms/openai.js';
-import { LlmClient, LlmMessage, Tool, ToolCall, ToolOutputSubmission } from './types.js';
-
-// LLM stub that returns no tool calls; CopilotEngine will fall back to heuristic planning.
-class NullLlm implements LlmClient {
-  async chat(
-    _messages: LlmMessage[],
-    _tools: Tool[],
-    opts?: { chatId?: string; toolOutputs?: ToolOutputSubmission[] }
-  ): Promise<{ content: string; toolCalls: ToolCall[]; chatId: string }> {
-    return { content: '', toolCalls: [], chatId: randomUUID()};
-  }
-}
-
-function createLlmFromEnv(): LlmClient {
-  const provider = (process.env.LLM_PROVIDER || 'mock').toLowerCase();
-  if (provider === 'openai') {
-    const key = process.env.OPENAI_API_KEY || '';
-    if (!key) {
-      console.warn('OPENAI_API_KEY missing; using mock LLM. Set LLM_PROVIDER=openai and OPENAI_API_KEY to enable OpenAI.');
-      return new MockLlmClient();
-    }
-    return new OpenAiLlm(key);
-  }
-  if (provider === 'mock') {
-    return new MockLlmClient();
-  }
-  return new NullLlm();
-}
+import { createLlmFromEnv } from './llmFactory.js';
 
 function createApp() {
   const app = express();

@@ -211,40 +211,5 @@ test('drills into incident timelines/logs/metrics when user asks for root cause'
   );
 });
 
-test('adopts conversation ids returned from follow-up planning when initial plan omitted them', async () => {
-  let plannerCalls = 0;
-  const llm: LlmClient = {
-    async chat(_messages: LlmMessage[], tools: Tool[], _opts?: { chatId?: string }) {
-      if (tools.length) {
-        plannerCalls += 1;
-        if (plannerCalls === 1) {
-          return { content: 'plan', toolCalls: [{ name: 'query-incidents', arguments: {} }], chatId: '' };
-        }
-        return {
-          content: 'follow plan',
-          toolCalls: [],
-          chatId: 'conv-follow',
-        } satisfies { content: string; toolCalls: ToolCall[]; chatId?: string };
-      }
-      return {
-        content: JSON.stringify({ conclusion: 'done', evidence: ['ready'] }),
-        toolCalls: [],
-        chatId: 'conv-follow',
-      };
-    },
-  };
+// Test removed: LLMs no longer return or manage chatId - engine controls conversation IDs
 
-  const mcp: StubMcp = {
-    async listTools() {
-      return [{ name: 'query-incidents' } as Tool];
-    },
-    async callTool(call) {
-      return { name: call.name, result: { incidents: [{ id: 'INC-1' }] } };
-    },
-  };
-
-  const engine = makeEngine(llm, mcp);
-  const answer = await engine.answer('Summarize incidents with follow-up context.');
-  assert.equal(plannerCalls, 2, 'engine should ask for follow-up plan when results exist');
-  assert.equal(answer.chatId, 'conv-follow');
-});

@@ -16,7 +16,6 @@ import { inferPlanFromQuestion } from './planFallback.js';
 
 export type PlannerResponse = {
   toolCalls: ToolCall[];
-  chatId: string;
 };
 
 const MAX_PLANNER_CALLS = 3;
@@ -25,11 +24,12 @@ export async function requestInitialPlan(
   question: string,
   llm: LlmClient,
   tools: Tool[],
-  chatId?: string,
+  history: LlmMessage[] = [],
 ): Promise<PlannerResponse> {
   const toolContext = buildToolContext(tools);
   const messages: LlmMessage[] = [
     { role: 'system', content: buildPlannerPrompt(toolContext) },
+    ...history,
     { role: 'user', content: question },
   ];
 
@@ -37,13 +37,11 @@ export async function requestInitialPlan(
     const reply = await llm.chat(
       messages,
       tools,
-      chatId ? { chatId } : undefined,
     );
 
     if (reply.toolCalls?.length) {
       return {
         toolCalls: limitCalls(reply.toolCalls),
-        chatId: reply.chatId
       };
     }
 
@@ -52,13 +50,11 @@ export async function requestInitialPlan(
       question,
       llm,
       tools,
-      reply.chatId
     );
   } catch (err) {
     console.warn('LLM planning failed, falling back to heuristics:', err);
     return {
       toolCalls: inferPlan(question),
-      chatId: randomUUID(),
     };
   }
 }
@@ -67,41 +63,41 @@ export async function requestFollowUpPlan(
   question: string,
   llm: LlmClient,
   tools: Tool[],
-  priorResults: ToolResult[],
-  chatId: string,
+  results: ToolResult[],
+  history: LlmMessage[] = [],
 ): Promise<PlannerResponse> {
   const toolContext = buildToolContext(tools);
-  const resultSummary = summarizeResults(priorResults) || 'No tool results yet.';
+  const resultSummary = summarizeResults(results) || 'No tool results yet.';
 
   const messages: LlmMessage[] = [
     {
       role: 'system',
-      content: buildRefinementPrompt(toolContext, priorResults.length),
+      content: buildRefinementPrompt(toolContext, results.length),
     },
+    ...history,
     {
       role: 'user',
       content:
         `Question: ${question}\n` +
-        `Tool results (count=${priorResults.length}):\n` +
+        `Tool results (count=${results.length}):\n` +
         `${resultSummary}\n` +
         `Plan follow-up tool calls with concrete arguments.`,
     },
   ];
 
   try {
-    const reply = await llm.chat(
-      messages,
-      tools,
-      { chatId },
-    );
+    const reply = await llm.chat(messages, tools);
+
+    if (!reply.toolCalls || reply.toolCalls.length === 0) {
+      return { toolCalls: [] };
+    }
 
     return {
-      toolCalls: limitCalls(reply.toolCalls ?? []),
-      chatId: reply.chatId,
+      toolCalls: limitCalls(reply.toolCalls),
     };
   } catch (err) {
-    console.warn('LLM refinement failed; skipping follow-up plan:', err);
-    return { toolCalls: [], chatId };
+    console.error('LLM refinement failed; skipping follow-up plan:', err);
+    return { toolCalls: [] };
   }
 }
 
@@ -109,7 +105,6 @@ async function requestJsonPlan(
   question: string,
   llm: LlmClient,
   tools: Tool[],
-  chatId: string,
 ): Promise<PlannerResponse> {
   const toolList = tools.map((t) => `- ${t.name}`).join('\n') || 'No tools.';
   const messages: LlmMessage[] = [
@@ -117,27 +112,21 @@ async function requestJsonPlan(
     { role: 'user', content: `User request: ${question}\nReturn only JSON.` },
   ];
 
-    try {
-    const reply = await llm.chat(
-      messages,
-      [],
-      { chatId },
-    );
-
-    const parsedCalls = parseToolCalls(reply.content);
-    if (parsedCalls.length) {
+  try {
+    const reply = await llm.chat(messages, []);
+    const parsed = parseToolCalls(reply.content);
+    if (parsed.length) {
       return {
-        toolCalls: limitCalls(parsedCalls),
-        chatId: reply.chatId,
-      }
+        toolCalls: limitCalls(parsed),
+      };
     }
+    return { toolCalls: [] };
   } catch (err) {
     console.warn('LLM JSON planner failed:', err);
   }
 
   return {
     toolCalls: inferPlan(question),
-    chatId
   };
 }
 
@@ -157,8 +146,8 @@ function parseToolCalls(raw?: string): ToolCall[] {
         if (!call?.name || typeof call.name !== 'string') return undefined;
         const args =
           call.arguments &&
-          typeof call.arguments === 'object' &&
-          !Array.isArray(call.arguments)
+            typeof call.arguments === 'object' &&
+            !Array.isArray(call.arguments)
             ? call.arguments
             : {};
         return { name: call.name, arguments: args } as ToolCall;

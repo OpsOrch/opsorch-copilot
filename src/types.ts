@@ -26,24 +26,30 @@ export type ToolOutputSubmission = {
   output: JsonValue;
 };
 
-export type LlmMessage =
-  | { role: 'system'; content: string }
-  | { role: 'user'; content: string }
-  | { role: 'assistant'; content: string }
-  | { role: 'tool'; toolName: string; content: string };
+export type LlmMessage = {
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content: string;
+  toolName?: string;
+};
 
-export interface LlmClient {
+export type LlmResponse = {
+  content: string;
+  toolCalls?: ToolCall[];
+  // Removed chatId - we manage this ourselves now
+};
+
+export type LlmClient = {
+  /**
+   * Send a chat request to the LLM.
+   * @param messages - Conversation messages
+   * @param tools - Available tools for the LLM to use
+   * @returns LLM response with content and optional tool calls
+   */
   chat(
     messages: LlmMessage[],
     tools: Tool[],
-    opts?: { chatId?: string;}
-  ): Promise<{
-    content: string;
-    toolCalls: ToolCall[];
-    chatId: string;
-  }>;
-
-}
+  ): Promise<LlmResponse>;
+};
 
 export type CopilotAnswer = {
   conclusion: string;              // human-friendly final answer
@@ -93,4 +99,5 @@ export type MetricCorrelation = {
 export type RuntimeConfig = {
   mcpUrl: string;
   llm: LlmClient;
+  maxIterations?: number;
 };

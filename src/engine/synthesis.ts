@@ -2,6 +2,9 @@ import { CopilotAnswer, LlmClient, LlmMessage, ToolResult } from '../types.js';
 import { buildFinalAnswerPrompt } from '../prompts.js';
 import { formatAnswer } from './answerFormatter.js';
 import { sanitizeReferences } from './references.js';
+import { ContextManager } from './contextManager.js';
+
+const contextManager = new ContextManager();
 
 export async function synthesizeCopilotAnswer(
   question: string,
@@ -12,13 +15,8 @@ export async function synthesizeCopilotAnswer(
   const fallback = formatAnswer(question, results, chatId);
   if (!results.length) return fallback;
 
-  const condensedResults = results
-    .map((r) => {
-      const payload = typeof r.result === 'string' ? r.result : JSON.stringify(r.result);
-      const trimmed = payload.length > 1200 ? `${payload.slice(0, 1200)}…` : payload;
-      return `${r.name}: ${trimmed}`;
-    })
-    .join('\n');
+  // Use context manager for intelligent result condensation
+  const condensedResults = contextManager.condenseResults(results, 3000);
 
   const messages: LlmMessage[] = [
     { role: 'system', content: buildFinalAnswerPrompt() },
@@ -35,7 +33,7 @@ export async function synthesizeCopilotAnswer(
     // IMPORTANT: do NOT pass chatId here.
     // This is a stateless, one-shot synthesis call, not a continuation
     // of the main tool-using conversation.
-    const reply = await llm.chat(messages, [], /* opts */ undefined);
+    const reply = await llm.chat(messages, []);
     console.log(`[Copilot][${chatId}] LLM synthesis reply: ${reply.content}`);
 
     let parsed: any;

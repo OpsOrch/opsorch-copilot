@@ -4,6 +4,7 @@ import {
   JsonValue,
   LlmClient,
   LlmMessage,
+  LlmResponse,
   Tool,
   ToolCall,
 } from '../types.js';
@@ -249,11 +250,8 @@ export class OpenAiLlm implements LlmClient {
   async chat(
     messages: LlmMessage[],
     tools: Tool[],
-    opts?: { chatId?: string },
-  ): Promise<{ content: string; toolCalls: ToolCall[]; chatId: string }> {
-    // Only treat chatId as a previous_response_id if it is actually a Responses id.
-
-    const input = buildInputForResponses(messages, opts?.chatId);
+  ): Promise<LlmResponse> {
+    const input = buildInputForResponses(messages, undefined);
 
     const body: any = {
       model: OPENAI_MODEL,
@@ -345,17 +343,10 @@ export class OpenAiLlm implements LlmClient {
     }
 
     const content = contentParts.join(' ').trim();
-    const responseId = typeof data?.id === 'string' ? data.id : undefined;
-
-    // IMPORTANT:
-    // - responseId is the only valid value to pass as previous_response_id next time
-    // - we return it as chatId so the caller can persist/use it
-    const chatId = responseId ?? randomUUID();
 
     return {
       content,
       toolCalls,
-      chatId,
     };
   }
 }

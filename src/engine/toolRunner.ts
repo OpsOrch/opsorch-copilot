@@ -1,17 +1,27 @@
-import { JsonObject, ToolCall, ToolResult } from '../types.js';
+import { JsonObject, ToolCall, ToolResult, Tool } from '../types.js';
 import { McpClient } from '../mcpClient.js';
 import { normalizeToolResultPayload } from './toolResultNormalizer.js';
+import { withRetry } from './retryStrategy.js';
+import { validateToolCall } from './toolsSchema.js';
 
 export async function runToolCalls(
   calls: ToolCall[],
   mcp: McpClient,
   logId: string,
-  getMissingRequiredArgs: (call: ToolCall) => string[]
+  tools: Tool[]
 ): Promise<ToolResult[]> {
   if (!calls.length) return [];
 
+  const toolMap = new Map(tools.map((t) => [t.name, t]));
+
   const runnable = calls.filter((call) => {
-    const missingArgs = getMissingRequiredArgs(call);
+    const tool = toolMap.get(call.name);
+    const validation = validateToolCall(call, tool || { name: call.name });
+
+    const missingArgs = validation.errors
+      .filter(e => e.startsWith('Missing required'))
+      .map(e => e.replace('Missing required field: ', ''));
+
     if (missingArgs.length) {
       console.log(
         `[Copilot][${logId}] Skipping tool ${call.name} because required field(s) are missing: ${missingArgs.join(', ')}`
@@ -32,8 +42,15 @@ export async function runToolCalls(
   const executions = runnable.map(async (call) => {
     const sanitizedArgs = (stripNullish(call.arguments) as JsonObject) ?? {};
     console.log(`[Copilot][${logId}] Calling tool ${call.name} with args ${JSON.stringify(sanitizedArgs)}`);
+
     try {
-      const result = await mcp.callTool({ name: call.name, arguments: sanitizedArgs });
+      // Use retry strategy for resilient tool execution
+      const result = await withRetry(
+        async () => await mcp.callTool({ name: call.name, arguments: sanitizedArgs }),
+        { maxRetries: 2, baseDelayMs: 500 }, // Less aggressive retry for tools
+        `tool:${call.name}`
+      );
+
       console.log(`[Copilot][${logId}] Tool ${call.name} returned successfully.`);
       return {
         name: result.name,
@@ -43,7 +60,13 @@ export async function runToolCalls(
       } satisfies ToolResult;
     } catch (err) {
       console.error(`[Copilot][${logId}] Tool ${call.name} failed with error:`, err);
-      throw err;
+      // Return error as a result instead of throwing, for partial success handling
+      return {
+        name: call.name,
+        result: { error: err instanceof Error ? err.message : String(err) },
+        arguments: sanitizedArgs,
+        callId: call.callId,
+      } satisfies ToolResult;
     }
   });
 

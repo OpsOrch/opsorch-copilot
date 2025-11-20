@@ -6,8 +6,15 @@ export type StubMcp = {
   callTool: (call: ToolCall) => Promise<{ name: string; result: unknown }>;
 };
 
-export function makeEngine(llm: LlmClient, mcp: StubMcp) {
-  const engine = new CopilotEngine({ mcpUrl: 'http://localhost:7070/mcp', llm });
+import { RuntimeConfig } from '../../src/types.js';
+
+export function makeEngine(llm: LlmClient, mcp: StubMcp, overrides?: Partial<RuntimeConfig>) {
+  const config: RuntimeConfig = {
+    mcpUrl: 'http://localhost:7070/mcp',
+    llm,
+    ...overrides,
+  };
+  const engine = new CopilotEngine(config);
   // Override MCP client with stub for tests (no network).
   (engine as any).mcp = mcp;
   return engine;
