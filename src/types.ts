@@ -26,30 +26,10 @@ export type ToolOutputSubmission = {
   output: JsonValue;
 };
 
-export type LlmMessage = {
-  role: 'system' | 'user' | 'assistant' | 'tool';
-  content: string;
-  toolName?: string;
-};
-
-export type LlmResponse = {
-  content: string;
-  toolCalls?: ToolCall[];
-  // Removed chatId - we manage this ourselves now
-};
-
-export type LlmClient = {
-  /**
-   * Send a chat request to the LLM.
-   * @param messages - Conversation messages
-   * @param tools - Available tools for the LLM to use
-   * @returns LLM response with content and optional tool calls
-   */
-  chat(
-    messages: LlmMessage[],
-    tools: Tool[],
-  ): Promise<LlmResponse>;
-};
+// Re-export LLM types for backward compatibility
+export type { LlmMessage, LlmResponse, LlmClient } from './llmClient.js';
+// Re-export RuntimeConfig
+export type { RuntimeConfig } from './runtimeConfig.js';
 
 export type CopilotAnswer = {
   conclusion: string;              // human-friendly final answer
@@ -96,8 +76,22 @@ export type MetricCorrelation = {
   alignedWith?: string[];
 };
 
-export type RuntimeConfig = {
-  mcpUrl: string;
-  llm: LlmClient;
-  maxIterations?: number;
+export type ConversationTurn = {
+  userMessage: string;
+  toolResults?: ToolResult[];
+  assistantResponse?: string;
+  timestamp: number;
+};
+
+export type Conversation = {
+  chatId: string;
+  turns: ConversationTurn[];
+  createdAt: number;
+  lastAccessedAt: number;
+};
+
+export type ConversationConfig = {
+  maxConversations: number;
+  maxTurnsPerConversation: number;
+  conversationTTLMs: number; // Time-to-live for inactive conversations
 };

@@ -147,10 +147,10 @@ export class CopilotEngine {
 
     // Periodic cache cleanup
     this.resultCache.clearExpired();
-    this.conversationManager.clearExpired();
+    await this.conversationManager.clearExpired();
 
     // Step 3: Retrieve conversation history
-    const conversationHistory = this.conversationManager.buildMessageHistory(chatId);
+    const conversationHistory = await this.conversationManager.buildMessageHistory(chatId);
     const isNewConversation = conversationHistory.length === 0;
 
     if (!isNewConversation) {
@@ -276,14 +276,14 @@ export class CopilotEngine {
     );
 
     // Step 6: Save conversation turn
-    this.conversationManager.addTurn(
+    await this.conversationManager.addTurn(
       chatId,
       question,
       allResults,
       answer.conclusion
     );
 
-    log(`Conversation stats: ${JSON.stringify(this.conversationManager.stats())}`);
+    log(`Conversation stats: ${JSON.stringify(await this.conversationManager.stats())}`);
 
     return {
       ...answer,

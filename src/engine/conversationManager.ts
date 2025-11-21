@@ -4,27 +4,14 @@
  * Stores message history per chatId to maintain context between API calls.
  */
 
-import { LlmMessage, ToolResult } from '../types.js';
-
-export type ConversationTurn = {
-    userMessage: string;
-    toolResults?: ToolResult[];
-    assistantResponse?: string;
-    timestamp: number;
-};
-
-export type Conversation = {
-    chatId: string;
-    turns: ConversationTurn[];
-    createdAt: number;
-    lastAccessedAt: number;
-};
-
-export type ConversationConfig = {
-    maxConversations: number;
-    maxTurnsPerConversation: number;
-    conversationTTLMs: number; // Time-to-live for inactive conversations
-};
+import {
+    Conversation,
+    ConversationConfig,
+    LlmMessage,
+    ToolResult,
+} from '../types.js';
+import { ConversationStore } from '../conversationStore.js';
+import { InMemoryConversationStore } from '../stores/inMemoryConversationStore.js';
 
 export const DEFAULT_CONVERSATION_CONFIG: ConversationConfig = {
     maxConversations: 100,
@@ -36,23 +23,28 @@ export const DEFAULT_CONVERSATION_CONFIG: ConversationConfig = {
  * ConversationManager maintains chat history across multiple API requests.
  * 
  * Features:
- * - Stores conversation history per chatId
- * - Automatically evicts old/inactive conversations (LRU)
+ * - Stores conversation history per chatId using pluggable storage backend
+ * - Automatically evicts old/inactive conversations
  * - Limits conversation length to prevent context overflow
  * - Thread-safe for concurrent requests
  */
 export class ConversationManager {
-    private conversations = new Map<string, Conversation>();
-    private accessOrder: string[] = [];
+    private readonly store: ConversationStore;
 
-    constructor(private readonly config: ConversationConfig = DEFAULT_CONVERSATION_CONFIG) { }
+    constructor(
+        private readonly config: ConversationConfig = DEFAULT_CONVERSATION_CONFIG,
+        store?: ConversationStore
+    ) {
+        // Default to in-memory store if none provided (backward compatible)
+        this.store = store ?? new InMemoryConversationStore(config);
+    }
 
     /**
      * Get conversation history for a chatId.
      * Returns null if conversation doesn't exist or has expired.
      */
-    getConversation(chatId: string): Conversation | null {
-        const conversation = this.conversations.get(chatId);
+    async getConversation(chatId: string): Promise<Conversation | null> {
+        const conversation = await this.store.get(chatId);
 
         if (!conversation) {
             return null;
@@ -61,14 +53,13 @@ export class ConversationManager {
         // Check if expired
         const age = Date.now() - conversation.lastAccessedAt;
         if (age > this.config.conversationTTLMs) {
-            this.deleteConversation(chatId);
+            await this.deleteConversation(chatId);
             return null;
         }
 
-        // Update access time and order (LRU)
+        // Update access time
         conversation.lastAccessedAt = Date.now();
-        this.accessOrder = this.accessOrder.filter(id => id !== chatId);
-        this.accessOrder.push(chatId);
+        await this.store.set(chatId, conversation);
 
         return conversation;
     }
@@ -76,8 +67,13 @@ export class ConversationManager {
     /**
      * Start a new conversation or append to existing one.
      */
-    addTurn(chatId: string, userMessage: string, toolResults?: ToolResult[], assistantResponse?: string): void {
-        let conversation = this.conversations.get(chatId);
+    async addTurn(
+        chatId: string,
+        userMessage: string,
+        toolResults?: ToolResult[],
+        assistantResponse?: string
+    ): Promise<void> {
+        let conversation = await this.store.get(chatId);
 
         if (!conversation) {
             // Create new conversation
@@ -87,17 +83,6 @@ export class ConversationManager {
                 createdAt: Date.now(),
                 lastAccessedAt: Date.now(),
             };
-
-            // Evict oldest conversation if at capacity
-            if (this.conversations.size >= this.config.maxConversations) {
-                const oldest = this.accessOrder.shift();
-                if (oldest) {
-                    this.conversations.delete(oldest);
-                }
-            }
-
-            this.conversations.set(chatId, conversation);
-            this.accessOrder.push(chatId);
         }
 
         // Add new turn
@@ -114,13 +99,14 @@ export class ConversationManager {
         }
 
         conversation.lastAccessedAt = Date.now();
+        await this.store.set(chatId, conversation);
     }
 
     /**
      * Build LLM message history from conversation turns.
      */
-    buildMessageHistory(chatId: string): LlmMessage[] {
-        const conversation = this.getConversation(chatId);
+    async buildMessageHistory(chatId: string): Promise<LlmMessage[]> {
+        const conversation = await this.getConversation(chatId);
         if (!conversation) {
             return [];
         }
@@ -164,41 +150,49 @@ export class ConversationManager {
     /**
      * Delete a conversation.
      */
-    deleteConversation(chatId: string): void {
-        this.conversations.delete(chatId);
-        this.accessOrder = this.accessOrder.filter(id => id !== chatId);
+    async deleteConversation(chatId: string): Promise<void> {
+        await this.store.delete(chatId);
     }
 
     /**
      * Clear expired conversations.
      */
-    clearExpired(): void {
+    async clearExpired(): Promise<void> {
         const now = Date.now();
         const toDelete: string[] = [];
 
-        for (const [chatId, conversation] of this.conversations.entries()) {
-            const age = now - conversation.lastAccessedAt;
-            if (age > this.config.conversationTTLMs) {
-                toDelete.push(chatId);
+        const chatIds = await this.store.list();
+        for (const chatId of chatIds) {
+            const conversation = await this.store.get(chatId);
+            if (conversation) {
+                const age = now - conversation.lastAccessedAt;
+                if (age > this.config.conversationTTLMs) {
+                    toDelete.push(chatId);
+                }
             }
         }
 
         for (const chatId of toDelete) {
-            this.deleteConversation(chatId);
+            await this.deleteConversation(chatId);
         }
     }
 
     /**
      * Get statistics about conversation storage.
      */
-    stats(): { activeConversations: number; totalTurns: number } {
+    async stats(): Promise<{ activeConversations: number; totalTurns: number }> {
         let totalTurns = 0;
-        for (const conversation of this.conversations.values()) {
-            totalTurns += conversation.turns.length;
+        const chatIds = await this.store.list();
+
+        for (const chatId of chatIds) {
+            const conversation = await this.store.get(chatId);
+            if (conversation) {
+                totalTurns += conversation.turns.length;
+            }
         }
 
         return {
-            activeConversations: this.conversations.size,
+            activeConversations: chatIds.length,
             totalTurns,
         };
     }
@@ -206,8 +200,7 @@ export class ConversationManager {
     /**
      * Clear all conversations (useful for testing).
      */
-    clear(): void {
-        this.conversations.clear();
-        this.accessOrder = [];
+    async clear(): Promise<void> {
+        await this.store.clear();
     }
 }
