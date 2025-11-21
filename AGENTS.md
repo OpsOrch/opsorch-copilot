@@ -89,7 +89,31 @@ This separation ensures:
 
 ---
 
-## 🔮 5. Future Extensions
+## 🧪 5. Testing with MockMcp
+
+For testing purposes, `opsorch-copilot` includes a `MockMcp` class that implements the `McpClient` interface without requiring network calls.
+
+**Location:** `src/mcps/mock.ts`
+
+**Purpose:**
+- Provides a lightweight MCP client for unit tests
+- Allows tests to define custom tool lists and responses
+- Maintains tool cache to support `hasTool()` and `getTools()` methods
+- Used by test helpers in `tests/helpers/copilotTestUtils.ts`
+
+**Example usage:**
+```typescript
+const mockMcp = new MockMcp(
+  async () => [{ name: 'query-incidents' }, { name: 'query-logs' }],
+  async (call) => ({ name: call.name, result: { mock: 'data' } })
+);
+```
+
+This enables fast, isolated testing of the Copilot engine without depending on external services.
+
+---
+
+## 🔮 6. Future Extensions
 
 - multi-agent execution  
 - proactive incident routing  

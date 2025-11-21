@@ -203,11 +203,11 @@ test('executes multi-step reasoning loop', async (t) => {
         { name: 'step2' } as Tool
       ];
     },
-    async callTool(call) {
+    async callTool(call): Promise<any> {
       calls.push(call);
       if (call.name === 'step1') return { name: 'step1', result: { next: 'step2' } };
       if (call.name === 'step2') return { name: 'step2', result: { done: true } };
-      return { name: 'unknown', result: {} };
+      return { name: 'unknown', result: null };
     },
   };
 
@@ -219,9 +219,11 @@ test('executes multi-step reasoning loop', async (t) => {
   assert.deepEqual(calls.map(c => c.name), ['step1', 'step2']);
 });
 
-test('stops loop when max iterations reached', async (t) => {
+test('stops loop when max iterations reached', async () => {
+  let llmCallCount = 0;
   const llmLoop: LlmClient = {
     async chat(_messages: LlmMessage[], _tools: Tool[]) {
+      llmCallCount++;
       // LLM always returns a tool call, trying to loop forever
       // Use unique args to bypass cache
       return {
@@ -231,32 +233,23 @@ test('stops loop when max iterations reached', async (t) => {
     },
   };
 
+  let toolCallCount = 0;
   const mcpLoop: StubMcp = {
     async listTools() {
       return [{ name: 'loop', inputSchema: {} } as Tool];
     },
     async callTool(_call) {
+      toolCallCount++;
       return { name: 'loop', result: 'ok' };
     },
   };
 
   const engineLoop = makeEngine(llmLoop, mcpLoop, { maxIterations: 2 });
 
-  const callToolMock = t.mock.method(mcpLoop, 'callTool', async () => ({ name: 'loop', result: 'ok' }));
-
-  // LLM always returns a tool call, trying to loop forever
-  t.mock.method(llmLoop, 'chat', async () => {
-    const args = { i: Math.random() };
-    return {
-      content: '',
-      toolCalls: [{ name: 'loop', arguments: args }]
-    };
-  });
-
   await engineLoop.answer('investigate loop');
 
   // Should stop after 2 iterations
-  assert.equal(callToolMock.mock.callCount(), 2);
+  assert.equal(toolCallCount, 2, `Expected 2 tool calls but got ${toolCallCount}`);
 });
 
 test('skips placeholder args and reports missing data', async () => {

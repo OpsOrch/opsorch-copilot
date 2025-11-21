@@ -40,7 +40,7 @@ test('refines plan with prior results to add concrete follow-ups', async () => {
         { name: 'get-incident-timeline' } as Tool,
       ];
     },
-    async callTool(call) {
+    async callTool(call): Promise<any> {
       calls.push(call);
       if (call.name === 'query-incidents') {
         return { name: call.name, result: { incidents: [{ id: 'INC-100' }] } };
@@ -159,7 +159,7 @@ test('drills into incident timelines/logs/metrics when user asks for root cause'
         { name: 'query-metrics' } as Tool,
       ];
     },
-    async callTool(call) {
+    async callTool(call): Promise<any> {
       calls.push(call);
       if (call.name === 'query-incidents') {
         return {

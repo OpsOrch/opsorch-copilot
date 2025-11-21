@@ -1,12 +1,12 @@
 import { CopilotEngine } from '../../src/engine/copilotEngine.js';
-import { LlmClient, Tool, ToolCall } from '../../src/types.js';
+import { LlmClient, Tool, ToolCall, ToolResult } from '../../src/types.js';
+import { MockMcp } from '../../src/mcps/mock.js';
+import { RuntimeConfig } from '../../src/types.js';
 
 export type StubMcp = {
   listTools: () => Promise<Tool[]>;
-  callTool: (call: ToolCall) => Promise<{ name: string; result: unknown }>;
+  callTool: (call: ToolCall) => Promise<ToolResult>;
 };
-
-import { RuntimeConfig } from '../../src/types.js';
 
 export function makeEngine(llm: LlmClient, mcp: StubMcp, overrides?: Partial<RuntimeConfig>) {
   const config: RuntimeConfig = {
@@ -15,7 +15,11 @@ export function makeEngine(llm: LlmClient, mcp: StubMcp, overrides?: Partial<Run
     ...overrides,
   };
   const engine = new CopilotEngine(config);
-  // Override MCP client with stub for tests (no network).
-  (engine as any).mcp = mcp;
+
+  // Create MockMcp instance from the stub
+  const mockMcp = new MockMcp(mcp.listTools, mcp.callTool);
+
+  // Override MCP client with mock for tests (no network).
+  (engine as any).mcp = mockMcp;
   return engine;
 }

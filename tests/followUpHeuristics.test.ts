@@ -2,17 +2,24 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { applyFollowUpHeuristics } from '../src/engine/followUpHeuristics.js';
 import { ToolCall, ToolResult } from '../src/types.js';
+import { McpClient } from '../src/mcpClient.js';
 
-// Helper to check if tool exists
-const makeHasTool = (tools: string[]) => (name: string) => tools.includes(name);
+// Helper to mock McpClient
+const makeMockMcp = (tools: string[]) => ({
+  hasTool: (name: string) => tools.includes(name),
+  callTool: async () => ({ result: {} }),
+  ensureTools: async () => { },
+  listTools: async () => [],
+  getTools: () => []
+} as unknown as McpClient);
 
 test('applyFollowUpHeuristics returns proposed calls if no results', () => {
   const question = 'what happened';
   const results: ToolResult[] = [];
   const proposed: ToolCall[] = [{ name: 'test', arguments: {} }];
-  const hasTool = makeHasTool([]);
+  const mcp = makeMockMcp([]);
 
-  const result = applyFollowUpHeuristics({ question, results, proposed, hasTool });
+  const result = applyFollowUpHeuristics({ question, results, proposed, mcp });
   assert.deepEqual(result, proposed);
 });
 
@@ -26,9 +33,9 @@ test('applyFollowUpHeuristics deduplicates calls', () => {
     { name: 'new', arguments: { id: '2' } },
     { name: 'new', arguments: { id: '2' } }   // Duplicate of proposed
   ];
-  const hasTool = makeHasTool([]);
+  const mcp = makeMockMcp([]);
 
-  const result = applyFollowUpHeuristics({ question, results, proposed, hasTool });
+  const result = applyFollowUpHeuristics({ question, results, proposed, mcp });
   // Should filter out duplicates but keep incident related calls if not drilling down
   // Since 'new' is not incident related and 'what happened' triggers drill down
   assert.equal(result.length, 1);
@@ -41,9 +48,9 @@ test('applyFollowUpHeuristics adds timeline for incident context', () => {
     { name: 'query-incidents', result: { incidents: [{ id: 'INC-1' }] } }
   ];
   const proposed: ToolCall[] = [];
-  const hasTool = makeHasTool(['get-incident-timeline']);
+  const mcp = makeMockMcp(['get-incident-timeline']);
 
-  const result = applyFollowUpHeuristics({ question, results, proposed, hasTool });
+  const result = applyFollowUpHeuristics({ question, results, proposed, mcp });
   assert.ok(result.some(c => c.name === 'get-incident-timeline'));
   const call = result.find(c => c.name === 'get-incident-timeline');
   assert.equal((call?.arguments as any)?.id, 'INC-1');
@@ -56,9 +63,9 @@ test('applyFollowUpHeuristics skips timeline if already executed', () => {
     { name: 'get-incident-timeline', arguments: { id: 'INC-1' }, result: 'ok' }
   ];
   const proposed: ToolCall[] = [];
-  const hasTool = makeHasTool(['get-incident-timeline']);
+  const mcp = makeMockMcp(['get-incident-timeline']);
 
-  const result = applyFollowUpHeuristics({ question, results, proposed, hasTool });
+  const result = applyFollowUpHeuristics({ question, results, proposed, mcp });
   assert.ok(!result.some(c => c.name === 'get-incident-timeline'));
 });
 
@@ -71,9 +78,9 @@ test('applyFollowUpHeuristics filters non-incident calls if not drilling down', 
     { name: 'query-logs', arguments: {} },
     { name: 'get-incident-timeline', arguments: { id: 'INC-1' } }
   ];
-  const hasTool = makeHasTool(['get-incident-timeline']);
+  const mcp = makeMockMcp(['get-incident-timeline']);
 
-  const result = applyFollowUpHeuristics({ question, results, proposed, hasTool });
+  const result = applyFollowUpHeuristics({ question, results, proposed, mcp });
   // Should keep timeline (incident related) but remove logs
   assert.ok(result.some(c => c.name === 'get-incident-timeline'));
   assert.ok(!result.some(c => c.name === 'query-logs'));
@@ -95,9 +102,9 @@ test('applyFollowUpHeuristics adds logs and metrics when drilling down', () => {
     }
   ];
   const proposed: ToolCall[] = [];
-  const hasTool = makeHasTool(['query-logs', 'query-metrics', 'get-incident-timeline']);
+  const mcp = makeMockMcp(['query-logs', 'query-metrics', 'get-incident-timeline']);
 
-  const result = applyFollowUpHeuristics({ question, results, proposed, hasTool });
+  const result = applyFollowUpHeuristics({ question, results, proposed, mcp });
 
   assert.ok(result.some(c => c.name === 'query-logs'));
   assert.ok(result.some(c => c.name === 'query-metrics'));
@@ -114,7 +121,7 @@ test('applyFollowUpHeuristics respects maxToolCalls', () => {
     { name: 'query-incidents', result: { incidents: [{ id: 'INC-1', start: '2024-01-01T10:00:00Z' }] } }
   ];
   const proposed: ToolCall[] = [];
-  const hasTool = makeHasTool(['query-logs', 'query-metrics', 'get-incident-timeline']);
+  const mcp = makeMockMcp(['query-logs', 'query-metrics', 'get-incident-timeline']);
 
   // Should generate timeline, logs, metrics (3 calls)
   // Limit to 1
@@ -122,7 +129,7 @@ test('applyFollowUpHeuristics respects maxToolCalls', () => {
     question,
     results,
     proposed,
-    hasTool,
+    mcp,
     maxToolCalls: 1
   });
 
@@ -135,9 +142,9 @@ test('applyFollowUpHeuristics expands time window correctly', () => {
     { name: 'query-incidents', result: { incidents: [{ id: 'INC-1', start: '2024-01-01T10:00:00Z' }] } }
   ];
   const proposed: ToolCall[] = [];
-  const hasTool = makeHasTool(['query-logs']);
+  const mcp = makeMockMcp(['query-logs']);
 
-  const result = applyFollowUpHeuristics({ question, results, proposed, hasTool });
+  const result = applyFollowUpHeuristics({ question, results, proposed, mcp });
   const logCall = result.find(c => c.name === 'query-logs');
   const start = new Date((logCall?.arguments as any).start);
   const end = new Date((logCall?.arguments as any).end);
@@ -167,7 +174,7 @@ test('applyFollowUpHeuristics generates context-aware log queries', () => {
     question,
     results: [incidentResult],
     proposed: [],
-    hasTool: (name: string) => name === 'query-logs' || name === 'get-incident-timeline',
+    mcp: makeMockMcp(['query-logs', 'get-incident-timeline']),
   });
 
   const logCall = result.find(c => c.name === 'query-logs');
@@ -195,9 +202,9 @@ test('applyFollowUpHeuristics selects targeted metrics for DB incidents', () => 
     }
   ];
   const proposed: ToolCall[] = [];
-  const hasTool = makeHasTool(['query-metrics']);
+  const mcp = makeMockMcp(['query-metrics']);
 
-  const result = applyFollowUpHeuristics({ question, results, proposed, hasTool });
+  const result = applyFollowUpHeuristics({ question, results, proposed, mcp });
   const metricCall = result.find(c => c.name === 'query-metrics');
   const expression = (metricCall?.arguments as any)?.expression;
 
@@ -221,9 +228,9 @@ test('applyFollowUpHeuristics selects targeted metrics for Disk incidents', () =
     }
   ];
   const proposed: ToolCall[] = [];
-  const hasTool = makeHasTool(['query-metrics']);
+  const mcp = makeMockMcp(['query-metrics']);
 
-  const result = applyFollowUpHeuristics({ question, results, proposed, hasTool });
+  const result = applyFollowUpHeuristics({ question, results, proposed, mcp });
   const metricCall = result.find(c => c.name === 'query-metrics');
   const expression = (metricCall?.arguments as any)?.expression;
 

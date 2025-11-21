@@ -49,7 +49,44 @@ Purpose: define how Copilot answers OpsOrch operational questions using only `op
 - Core URL/token/timeouts set on the MCP server (env: `OPSORCH_CORE_URL`, `OPSORCH_CORE_TOKEN`).
 - LLM backend: configurable (OpenAI/Anthropic/local); runtime standardizes chat + tool-call schema.
 
-## Next steps
-- Add system prompt + few-shot templates aligned to these recipes.
-- Implement runtime loop that: caches tool schemas, runs plan → tool → refine → answer, and enforces output format.
-- Add evaluative smoke tests (mock MCP responses) for common question types.
+## Implementation status
+
+### ✅ Completed
+- **MCP Client abstraction**: `McpClient` interface with `OpsOrchMcp` HTTP implementation and `MockMcp` for testing
+- **Multi-step agentic reasoning loop**: Configurable `maxIterations` for complex problem solving
+- **Question heuristics**: Automatic tool call injection for incidents, logs, and metrics based on question patterns
+- **Follow-up heuristics**: Context-aware refinement of tool calls using previous results
+- **Service discovery**: Cached service lookup for intelligent pattern matching
+- **Conversation management**: Persistent conversation history with LRU eviction
+- **Context-aware synthesis**: LLM-based answer generation with evidence and references
+
+## Testing
+
+### Unit tests
+Tests use `MockMcp` from `src/mcps/mock.ts` to simulate MCP tool responses without network calls:
+
+```typescript
+const mockMcp = new MockMcp(
+  async () => [{ name: 'query-incidents' }, { name: 'query-logs' }],
+  async (call) => ({ name: call.name, result: { mock: 'data' } })
+);
+```
+
+Test suites cover:
+- **Question heuristics**: Pattern matching, service extraction, tool injection
+- **Follow-up heuristics**: Deduplication, context enrichment, time window calculation
+- **Planning loop**: Multi-step reasoning, iteration limits, cache behavior
+- **Conversation history**: Turn storage, retrieval, LRU eviction
+- **Server endpoints**: Chat API, conversation listing, error handling
+
+Run tests: `npm test`
+
+### Integration testing
+Start the full stack for end-to-end testing:
+1. Start Core: `cd ../opsorch-core && npm run dev`
+2. Start MCP: `cd ../opsorch-mcp && npm run dev`
+3. Start Copilot: `npm run dev`
+4. Start Console: `cd ../opsorch-console && npm run dev`
+
+Test via Console UI or direct API calls to `http://localhost:6060/chat`
+

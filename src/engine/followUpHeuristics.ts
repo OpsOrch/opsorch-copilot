@@ -14,13 +14,14 @@ type TimeRange = {
   end: string;
 };
 
+import { McpClient } from '../mcpClient.js';
+
 type HeuristicParams = {
   question: string;
   results: ToolResult[];
   proposed: ToolCall[];
-  hasTool: (name: string) => boolean;
+  mcp: McpClient;
   maxToolCalls?: number;
-  logger?: (message: string) => void;
 };
 
 const CONSTANTS = {
@@ -40,8 +41,8 @@ const CONSTANTS = {
   },
 };
 
-export function applyFollowUpHeuristics({ question, results, proposed, hasTool, maxToolCalls, logger }: HeuristicParams): ToolCall[] {
-  const log = logger || (() => { });
+export function applyFollowUpHeuristics({ question, results, proposed, mcp, maxToolCalls }: HeuristicParams): ToolCall[] {
+  const hasTool = (name: string) => mcp.hasTool(name);
 
   if (!results.length) return proposed;
 
@@ -55,18 +56,13 @@ export function applyFollowUpHeuristics({ question, results, proposed, hasTool, 
   const enqueue = (call: ToolCall, source?: string) => {
     const key = callSignature(call);
     if (executedKeys.has(key)) {
-      log(`[FollowUp] Skipped duplicate (already executed): ${call.name}`);
       return;
     }
     if (scheduledKeys.has(key)) {
-      log(`[FollowUp] Skipped duplicate (already scheduled): ${call.name}`);
       return;
     }
     scheduledKeys.add(key);
     deduped.push(call);
-    if (source) {
-      log(`[FollowUp] ${source}: ${call.name}`);
-    }
   };
 
   proposed.forEach((call) => enqueue(call, 'Kept LLM proposal'));
@@ -78,18 +74,15 @@ export function applyFollowUpHeuristics({ question, results, proposed, hasTool, 
 
   // 3. Handle Timeline Follow-up
   if (context && hasTool(CONSTANTS.TOOLS.TIMELINE)) {
-    handleTimelineFollowUp(context.id, results, deduped, enqueue, log);
+    handleTimelineFollowUp(context.id, results, deduped, enqueue);
   }
 
   // 4. Check if we should drill down further
   const drillDown = shouldDrillIntoIncident(question);
   if (!drillDown) {
-    log('[FollowUp] Not drilling down - keeping only incident-related calls');
     // If not drilling down, only keep incident-related calls
     deduped = deduped.filter((call) => call.name.includes('incident'));
     return clamp(deduped, maxToolCalls);
-  } else {
-    log('[FollowUp] Drill-down detected - adding logs and metrics');
   }
 
   if (!context) {
@@ -106,12 +99,12 @@ export function applyFollowUpHeuristics({ question, results, proposed, hasTool, 
 
   // 6. Handle Logs Follow-up
   if (hasTool(CONSTANTS.TOOLS.LOGS)) {
-    handleLogsFollowUp(window, scope, context, enqueue, log);
+    handleLogsFollowUp(window, scope, context, enqueue);
   }
 
   // 7. Handle Metrics Follow-up
   if (hasTool(CONSTANTS.TOOLS.METRICS)) {
-    handleMetricsFollowUp(window, scope, context, enqueue, log);
+    handleMetricsFollowUp(window, scope, context, enqueue);
   }
 
   return clamp(deduped, maxToolCalls);
@@ -121,8 +114,7 @@ function handleTimelineFollowUp(
   incidentId: string,
   results: ToolResult[],
   deduped: ToolCall[],
-  enqueue: (call: ToolCall, source?: string) => void,
-  log: (message: string) => void
+  enqueue: (call: ToolCall, source?: string) => void
 ) {
   const timelineAlreadyDone = results.some(
     (r) => r.name === CONSTANTS.TOOLS.TIMELINE && ((r.arguments as any)?.id ?? '') === incidentId
@@ -140,8 +132,7 @@ function handleLogsFollowUp(
   window: TimeRange,
   scope: JsonObject | undefined,
   context: IncidentContext,
-  enqueue: (call: ToolCall, source?: string) => void,
-  log: (message: string) => void
+  enqueue: (call: ToolCall, source?: string) => void
 ) {
   let query = 'error OR exception OR failed OR 500';
 
@@ -149,7 +140,6 @@ function handleLogsFollowUp(
   const keywords = extractKeywords(context.title || context.summary || '');
   if (keywords.length) {
     query += ` OR (${keywords.join(' AND ')})`;
-    log(`[FollowUp] Enhanced log query with keywords: ${keywords.join(', ')}`);
   }
 
   const logArgs: JsonObject = {
@@ -167,8 +157,7 @@ function handleMetricsFollowUp(
   window: TimeRange,
   scope: JsonObject | undefined,
   context: IncidentContext,
-  enqueue: (call: ToolCall, source?: string) => void,
-  log: (message: string) => void
+  enqueue: (call: ToolCall, source?: string) => void
 ) {
   const metrics = ['latency_p95', 'error_rate', 'cpu_usage', 'memory_usage'];
   const addedMetrics: string[] = [];
@@ -186,10 +175,6 @@ function handleMetricsFollowUp(
   if (text.includes('network') || text.includes('timeout')) {
     metrics.push('network_in', 'network_out');
     addedMetrics.push('network');
-  }
-
-  if (addedMetrics.length) {
-    log(`[FollowUp] Added context-aware metrics: ${addedMetrics.join(', ')}`);
   }
 
   const metricArgs: JsonObject = {

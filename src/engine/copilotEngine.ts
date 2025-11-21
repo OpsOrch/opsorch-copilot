@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { McpFactory } from '../mcpFactory.js';
 import { McpClient } from '../mcpClient.js';
 import {
   CopilotAnswer,
@@ -41,16 +42,13 @@ const MAX_TOOL_CALLS_PER_ITERATION = 3;
  */
 export class CopilotEngine {
   private readonly mcp: McpClient;
-  private toolsLoaded = false;
-  private toolsCache =
-    [] as ReturnType<McpClient['listTools']> extends Promise<infer T> ? T : never;
   private readonly resultCache: ResultCache;
   private readonly conversationManager: ConversationManager;
   private readonly chatNamer: ChatNamer;
   private readonly maxIterations: number;
 
   constructor(private readonly config: RuntimeConfig) {
-    this.mcp = new McpClient(config.mcpUrl);
+    this.mcp = McpFactory.create(config);
     this.resultCache = new ResultCache();
     this.conversationManager = new ConversationManager();
     this.chatNamer = new ChatNamer();
@@ -62,16 +60,7 @@ export class CopilotEngine {
    * This is called once per session to avoid repeated tool list requests.
    */
   async ensureTools(): Promise<void> {
-    if (this.toolsLoaded) return;
-    this.toolsCache = await this.mcp.listTools();
-    this.toolsLoaded = true;
-  }
-
-  /**
-   * Check if a specific tool is available.
-   */
-  private hasTool(toolName: string): boolean {
-    return this.toolsCache.some((t) => t.name === toolName);
+    await this.mcp.ensureTools();
   }
 
   /**
@@ -169,7 +158,7 @@ export class CopilotEngine {
       console.log(`[Copilot][${chatId}] Starting new conversation`);
     }
 
-    const log = (msg: string) => console.log(`[Copilot][${chatId}] ${msg}`);
+
 
     const allResults: ToolResult[] = [];
     let iteration = 0;
@@ -178,7 +167,7 @@ export class CopilotEngine {
     // Step 4: Reasoning Loop
     while (iteration < this.maxIterations) {
       iteration++;
-      log(`Starting iteration ${iteration}/${this.maxIterations}`);
+      console.log(`[Copilot][${chatId}] Starting iteration ${iteration}/${this.maxIterations}`);
 
       let plannedCalls: ToolCall[] = [];
 
@@ -188,18 +177,17 @@ export class CopilotEngine {
         const plan = await requestInitialPlan(
           question,
           this.config.llm,
-          this.toolsCache,
+          this.mcp.getTools(),
           conversationHistory,
         );
         plannedCalls = plan.toolCalls ?? [];
 
         // Apply heuristics only on initial plan
-        plannedCalls = applyQuestionHeuristics(
+        plannedCalls = await applyQuestionHeuristics(
           question,
           plannedCalls,
-          (name) => this.hasTool(name),
-          conversationHistory,
-          (msg) => log(msg)
+          this.mcp,
+          conversationHistory
         );
       } else {
         // Follow-up plan (or initial plan for continued conversation)
@@ -209,7 +197,7 @@ export class CopilotEngine {
         const plan = await requestFollowUpPlan(
           question,
           this.config.llm,
-          this.toolsCache,
+          this.mcp.getTools(),
           successfulResults,
           conversationHistory,
         );
@@ -220,9 +208,8 @@ export class CopilotEngine {
           question,
           results: successfulResults,
           proposed: plannedCalls,
-          hasTool: (name) => this.hasTool(name),
-          maxToolCalls: MAX_TOOL_CALLS_PER_ITERATION,
-          logger: (msg) => log(msg),
+          mcp: this.mcp,
+          maxToolCalls: MAX_TOOL_CALLS_PER_ITERATION
         });
       }
 
@@ -231,17 +218,17 @@ export class CopilotEngine {
 
       // B. Check Stop Condition
       if (plannedCalls.length === 0) {
-        log('Planner produced no tool calls. Stopping loop.');
+        console.log(`[Copilot][${chatId}] Planner produced no tool calls. Stopping loop.`);
         break;
       }
 
-      log(`Planner proposed ${plannedCalls.length} call(s): ${plannedCalls.map(c => c.name).join(', ')}`);
+      console.log(`[Copilot][${chatId}] Planner proposed ${plannedCalls.length} call(s): ${plannedCalls.map(c => c.name).join(', ')}`);
 
       // C. Execute
       const results = await this.runToolCallsWithCache(
         plannedCalls,
         chatId,
-        this.toolsCache,
+        this.mcp.getTools(),
       );
 
       // D. Accumulate
@@ -264,7 +251,7 @@ export class CopilotEngine {
           ),
       ).length;
       if (successfulCount === 0 && results.length > 0) {
-        log('All tools in this iteration failed.');
+        console.log(`[Copilot][${chatId}] All tools in this iteration failed.`);
         // If everything failed, maybe we should stop to avoid infinite error loops?
         // Or maybe the heuristics will try something else?
         // For safety, if we have 0 successes in this batch, let's break to avoid thrashing,
@@ -274,7 +261,7 @@ export class CopilotEngine {
     }
 
     if (iteration >= this.maxIterations) {
-      log(`Reached maximum iterations (${this.maxIterations}). Stopping.`);
+      console.log(`[Copilot][${chatId}] Reached maximum iterations (${this.maxIterations}). Stopping.`);
     }
 
     // Step 5: Synthesize final answer
@@ -298,13 +285,15 @@ export class CopilotEngine {
     try {
       const conversationName = this.chatNamer.generateName(question, Date.now());
       await this.conversationManager.setConversationName(chatId, conversationName);
-      log(`${isNewConversation ? 'Generated' : 'Updated'} conversation name: "${conversationName}"`);
+      console.log(`[Copilot][${chatId}] ${isNewConversation ? 'Generated' : 'Updated'} conversation name: "${conversationName}"`);
+
     } catch (error) {
-      log(`Failed to ${isNewConversation ? 'generate' : 'update'} conversation name: ${error}`);
+      console.log(`[Copilot][${chatId}] Failed to ${isNewConversation ? 'generate' : 'update'} conversation name: ${error}`);
       // Continue even if naming fails - conversation is still valid
     }
 
-    log(`Conversation stats: ${JSON.stringify(await this.conversationManager.stats())}`);
+    console.log(`[Copilot][${chatId}] Conversation stats: ${JSON.stringify(await this.conversationManager.stats())}`);
+
 
     return {
       ...answer,

@@ -80,7 +80,7 @@ test('passes conversation history to LLM for contextual follow-up questions', as
                 );
                 return { name: 'query-incidents', result: [] };
             }
-            return { name: call.name, result: {} };
+            return { name: call.name, result: null };
         },
     };
 
