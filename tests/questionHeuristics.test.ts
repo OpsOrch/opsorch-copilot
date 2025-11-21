@@ -149,16 +149,17 @@ test('applyQuestionHeuristics combines multiple heuristics', async () => {
     assert.ok(result.some(c => c.name === 'query-metrics'));
 });
 
-test('applyQuestionHeuristics prioritizes incidents when injected', async () => {
+test('applyQuestionHeuristics defers to LLM plans', async () => {
     const question = 'show sev1 incidents';
     const existingCall: ToolCall = { name: 'query-services', arguments: {} };
     const calls: ToolCall[] = [existingCall];
     const mcp = mockMcp(['query-incidents', 'query-services']);
 
     const result = await applyQuestionHeuristics(question, calls, mcp);
-    // When incidents are injected, they should be prioritized (come first)
-    assert.ok(result.some(c => c.name === 'query-incidents'), 'Should inject incident call');
-    assert.equal(result[0].name, 'query-incidents', 'Incident should be first');
+    // With conservative heuristics, we defer to LLM's plan (query-services)
+    // Heuristics should NOT override when LLM provides a valid plan
+    assert.equal(result.length, 1, 'Should keep LLM plan');
+    assert.equal(result[0].name, 'query-services', 'Should defer to LLM choice');
 });
 
 test('applyQuestionHeuristics handles 5xx error pattern', async () => {

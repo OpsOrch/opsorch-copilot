@@ -12,12 +12,15 @@ import {
 } from '../types.js';
 import { ConversationStore } from '../conversationStore.js';
 import { InMemoryConversationStore } from '../stores/inMemoryConversationStore.js';
+import { Entity, ConversationContext } from './entityExtractor.js';
 
 export const DEFAULT_CONVERSATION_CONFIG: ConversationConfig = {
     maxConversations: 100,
     maxTurnsPerConversation: 20,
     conversationTTLMs: 30 * 60 * 1000, // 30 minutes
 };
+
+const MAX_ENTITIES_PER_TYPE = 100; // LRU limit per entity type
 
 /**
  * ConversationManager maintains chat history across multiple API requests.
@@ -71,7 +74,8 @@ export class ConversationManager {
         chatId: string,
         userMessage: string,
         toolResults?: ToolResult[],
-        assistantResponse?: string
+        assistantResponse?: string,
+        entities?: Entity[]
     ): Promise<void> {
         let conversation = await this.store.get(chatId);
 
@@ -92,6 +96,7 @@ export class ConversationManager {
             toolResults,
             assistantResponse,
             timestamp: Date.now(),
+            entities,
         });
 
         // Limit conversation length (keep most recent turns)
@@ -227,5 +232,44 @@ export class ConversationManager {
      */
     async clear(): Promise<void> {
         await this.store.clear();
+    }
+
+    /**
+     * Get entities from conversation history.
+     * Returns a ConversationContext with entities organized by type.
+     */
+    async getEntities(chatId: string): Promise<ConversationContext> {
+        const conversation = await this.getConversation(chatId);
+        const entityMap = new Map<string, Entity[]>();
+
+        if (!conversation) {
+            return { chatId, entities: entityMap };
+        }
+
+        // Collect all entities from all turns
+        const allEntities: Entity[] = [];
+        for (const turn of conversation.turns) {
+            if (turn.entities) {
+                allEntities.push(...turn.entities);
+            }
+        }
+
+        // Group by type and apply LRU limit
+        for (const entity of allEntities) {
+            const typeEntities = entityMap.get(entity.type) || [];
+            typeEntities.push(entity);
+            entityMap.set(entity.type, typeEntities);
+        }
+
+        // Apply LRU eviction per type (keep most recent)
+        for (const [type, entities] of entityMap.entries()) {
+            if (entities.length > MAX_ENTITIES_PER_TYPE) {
+                // Sort by extractedAt descending and keep most recent
+                entities.sort((a, b) => b.extractedAt - a.extractedAt);
+                entityMap.set(type, entities.slice(0, MAX_ENTITIES_PER_TYPE));
+            }
+        }
+
+        return { chatId, entities: entityMap };
     }
 }

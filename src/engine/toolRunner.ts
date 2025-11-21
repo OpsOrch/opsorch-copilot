@@ -3,31 +3,53 @@ import { McpClient } from '../mcpClient.js';
 import { normalizeToolResultPayload } from './toolResultNormalizer.js';
 import { withRetry } from './retryStrategy.js';
 import { validateToolCall } from './toolsSchema.js';
+import { TimeWindowExpander } from './timeWindowExpander.js';
 
 export async function runToolCalls(
   calls: ToolCall[],
   mcp: McpClient,
   logId: string,
-  tools: Tool[]
+  tools: Tool[],
+  enableWindowExpansion: boolean = false
 ): Promise<ToolResult[]> {
   if (!calls.length) return [];
 
   const toolMap = new Map(tools.map((t) => [t.name, t]));
+  const windowExpander = new TimeWindowExpander();
 
   const runnable = calls.filter((call) => {
     const tool = toolMap.get(call.name);
     const validation = validateToolCall(call, tool || { name: call.name });
 
+    // Log warnings (non-blocking)
+    if (validation.warnings.length > 0) {
+      console.log(
+        `[Copilot][${logId}] Tool ${call.name} validation warnings:\n` +
+        validation.warnings.map(w => `  - ${w}`).join('\n')
+      );
+    }
+
     const missingArgs = validation.errors
       .filter(e => e.startsWith('Missing required'))
-      .map(e => e.replace('Missing required field: ', ''));
+      .map(e => e.replace(/Missing required field: '(.+?)'.*/, '$1'));
 
-    if (missingArgs.length) {
+    if (missingArgs.length > 0) {
       console.log(
         `[Copilot][${logId}] Skipping tool ${call.name} because required field(s) are missing: ${missingArgs.join(', ')}`
       );
       return false;
     }
+
+    // Check for other validation errors
+    const otherErrors = validation.errors.filter(e => !e.startsWith('Missing required'));
+    if (otherErrors.length > 0) {
+      console.log(
+        `[Copilot][${logId}] Skipping tool ${call.name} due to validation errors:\n` +
+        otherErrors.map(e => `  - ${e}`).join('\n')
+      );
+      return false;
+    }
+
     if (Object.values(call.arguments ?? {}).some((v) => typeof v === 'string' && v.startsWith('{{'))) {
       console.log(
         `[Copilot][${logId}] Skipping tool ${call.name} because it contains placeholder args: ${JSON.stringify(
@@ -52,12 +74,34 @@ export async function runToolCalls(
       );
 
       console.log(`[Copilot][${logId}] Tool ${call.name} returned successfully.`);
-      return {
+
+      const toolResult: ToolResult = {
         name: result.name,
         result: normalizeToolResultPayload(result.result),
         arguments: sanitizedArgs,
         callId: call.callId,
-      } satisfies ToolResult;
+      };
+
+      // Check if result is empty and try expanding window
+      if (enableWindowExpansion && windowExpander.isEmptyResult(toolResult)) {
+        console.log(`[Copilot][${logId}] Tool ${call.name} returned empty result, attempting window expansion`);
+
+        const { result: expandedResult, expansion } = await windowExpander.retryWithExpansion(
+          call,
+          toolResult,
+          mcp
+        );
+
+        if (expansion.expanded) {
+          console.log(`[Copilot][${logId}] Window expansion successful for ${call.name}`);
+          return {
+            ...expandedResult,
+            result: normalizeToolResultPayload(expandedResult.result),
+          };
+        }
+      }
+
+      return toolResult;
     } catch (err) {
       console.error(`[Copilot][${logId}] Tool ${call.name} failed with error:`, err);
       // Return error as a result instead of throwing, for partial success handling

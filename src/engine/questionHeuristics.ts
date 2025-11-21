@@ -44,6 +44,75 @@ export async function applyQuestionHeuristics(
   const tools = await mcp.listTools();
   const knownServices = await getKnownServices(mcp, tools);
 
+  // Only apply heuristics if LLM didn't provide any meaningful plan
+  // Empty plan (length = 0) should still allow heuristics to inject
+  const hasValidLlmPlan = augmented.length > 0 && augmented.some(call => !hasPlaceholders(call.arguments));
+
+  if (hasValidLlmPlan) {
+    console.log(`[QuestionHeuristics] Deferring to LLM plan (${augmented.length} call(s))`);
+
+    // Validate service names in the LLM plan
+    // The LLM might guess "payment" when the service is "payments-svc"
+    // We should correct this using our known services list
+    let modified = false;
+    const validatedCalls = augmented.map(call => {
+      // Check for service in arguments
+      const args = call.arguments as any;
+      if (!args) return call;
+
+      let serviceToValidate: string | undefined;
+      let path: string[] = [];
+
+      // Check common paths for service name
+      if (typeof args.service === 'string') {
+        serviceToValidate = args.service;
+        path = ['service'];
+      } else if (args.scope && typeof args.scope.service === 'string') {
+        serviceToValidate = args.scope.service;
+        path = ['scope', 'service'];
+      }
+
+      if (serviceToValidate) {
+        // Check if it's a known service
+        const isKnown = knownServices.some(s => s.toLowerCase() === serviceToValidate!.toLowerCase());
+
+        if (!isKnown) {
+          // Try to find a match using our extraction logic
+          // We create a fake question context with just the service name to reuse extractService logic
+          const corrected = extractService(`service ${serviceToValidate}`, knownServices);
+
+          if (corrected && corrected.toLowerCase() !== serviceToValidate.toLowerCase()) {
+            console.log(`[QuestionHeuristics] Correcting service name: "${serviceToValidate}" -> "${corrected}"`);
+
+            // Clone args to avoid mutation issues
+            const newArgs = JSON.parse(JSON.stringify(args));
+
+            // Update the value at the correct path
+            if (path.length === 1) {
+              newArgs[path[0]] = corrected;
+            } else if (path.length === 2) {
+              newArgs[path[0]][path[1]] = corrected;
+            }
+
+            modified = true;
+            return { ...call, arguments: newArgs };
+          }
+        }
+      }
+
+      return call;
+    });
+
+    return validatedCalls; // Trust the LLM's judgment (with corrections)
+  }
+
+  // LLM didn't provide a valid plan - heuristics can inject tools
+  if (augmented.length === 0) {
+    console.log(`[QuestionHeuristics] LLM returned empty plan, applying heuristics`);
+  } else {
+    console.log(`[QuestionHeuristics] LLM plan contains only placeholders, applying heuristics`);
+  }
+
   // 1. Incident Heuristics
   const wantsIncident =
     PATTERNS.INCIDENT.test(normalized) ||
@@ -54,6 +123,8 @@ export async function applyQuestionHeuristics(
 
   if (wantsIncident && !hasIncidentCall && hasTool(TOOLS.INCIDENTS)) {
     const args = getIncidentArgs(normalized);
+    const confidence = wantsIncident ? 0.8 : 0.5;
+    console.log(`[QuestionHeuristics] Injecting incident query (confidence: ${confidence})`);
     inserted.push({
       name: TOOLS.INCIDENTS,
       arguments: args
@@ -67,35 +138,42 @@ export async function applyQuestionHeuristics(
   const errorCode = errorCodeMatch ? errorCodeMatch[1] : undefined;
   const mentions5xx = PATTERNS.ERROR_5XX.test(normalized) || PATTERNS.GENERIC_5XX.test(normalized) || Boolean(errorCode);
 
-  // 2. Log Heuristics
+  // 2. Log Heuristics - only add if not already in plan
   const wantsLogs = PATTERNS.LOGS.test(normalized) || mentions5xx;
   const hasLogCall = augmented.some((call) => call.name === TOOLS.LOGS && !hasPlaceholders(call.arguments));
 
   if (wantsLogs && !hasLogCall && hasTool(TOOLS.LOGS)) {
     const args = getLogArgs(question, errorCode, window, service);
+    const confidence = mentions5xx ? 0.85 : 0.65;
+    console.log(`[QuestionHeuristics] Injecting log query (confidence: ${confidence})`);
     inserted.push({
       name: TOOLS.LOGS,
       arguments: args
     });
   }
 
-  // 3. Metric Heuristics
+  // 3. Metric Heuristics - only add if not already in plan
   const wantsMetrics = PATTERNS.METRICS.ANY.test(normalized) || mentions5xx;
   const hasMetricCall = augmented.some((call) => call.name === TOOLS.METRICS && !hasPlaceholders(call.arguments));
 
   if (wantsMetrics && !hasMetricCall && hasTool(TOOLS.METRICS)) {
     const args = getMetricArgs(normalized, errorCode, window, service);
+    const confidence = mentions5xx ? 0.8 : 0.6;
+    console.log(`[QuestionHeuristics] Injecting metric query (confidence: ${confidence})`);
     inserted.push({
       name: TOOLS.METRICS,
       arguments: args
     });
   }
 
-  // Smart prioritization instead of aggressive filtering
+  // Only inject if we found high-confidence matches
   if (inserted.length > 0) {
+    console.log(`[QuestionHeuristics] Supplementing empty/placeholder plan with ${inserted.length} heuristic call(s)`);
     return prioritizeAndMerge(inserted, augmented, normalized);
   }
 
+  // LLM didn't provide a plan and heuristics didn't match - return empty to trigger fallback
+  console.log(`[QuestionHeuristics] No heuristic matches, allowing fallback to trigger`);
   return augmented;
 }
 

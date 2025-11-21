@@ -10,6 +10,7 @@ test('validateToolCall passes when no schema defined', () => {
     const result = validateToolCall(call, tool);
     assert.equal(result.valid, true);
     assert.equal(result.errors.length, 0);
+    assert.equal(result.warnings.length, 0);
 });
 
 test('validateToolCall catches missing required fields', () => {
@@ -194,5 +195,213 @@ test('validateToolCall handles complex valid schema', () => {
     assert.equal(result.valid, true);
     assert.equal(result.errors.length, 0);
 });
+
+// NEW TESTS FOR ENHANCED VALIDATION
+
+test('validateToolCall detects invalid ISO8601 timestamps', () => {
+    const tool: Tool = {
+        name: 'query-logs',
+        inputSchema: {
+            type: 'object',
+            required: ['start', 'end'],
+            properties: {
+                start: { type: 'string' },
+                end: { type: 'string' },
+            },
+        },
+    };
+
+    const call: ToolCall = {
+        name: 'query-logs',
+        arguments: {
+            start: '2024-01-01',  // Not full ISO8601
+            end: 'invalid-date',
+        },
+    };
+
+    const result = validateToolCall(call, tool);
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some(e => e.includes('ISO 8601')));
+});
+
+test('validateToolCall validates time window (start < end)', () => {
+    const tool: Tool = {
+        name: 'query-logs',
+        inputSchema: { type: 'object', properties: {} },
+    };
+
+    const call: ToolCall = {
+        name: 'query-logs',
+        arguments: {
+            start: '2024-01-01T10:00:00Z',
+            end: '2024-01-01T09:00:00Z',  // end before start!
+        },
+    };
+
+    const result = validateToolCall(call, tool);
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some(e => e.includes('before')));
+});
+
+test('validateToolCall warns about large time windows', () => {
+    const tool: Tool = {
+        name: 'query-logs',
+        inputSchema: { type: 'object', properties: {} },
+    };
+
+    const call: ToolCall = {
+        name: 'query-logs',
+        arguments: {
+            start: '2024-01-01T00:00:00Z',
+            end: '2024-01-03T00:00:00Z',  // 48 hours
+        },
+    };
+
+    const result = validateToolCall(call, tool);
+    assert.equal(result.valid, true);  // Valid but with warning
+    assert.ok(result.warnings.some(w => w.includes('hours')));
+});
+
+test('validateToolCall checks numeric minimum constraint', () => {
+    const tool: Tool = {
+        name: 'test',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                port: { type: 'number', minimum: 1000 },
+            },
+        },
+    };
+
+    const call: ToolCall = {
+        name: 'test',
+        arguments: { port: 80 },  // Below minimum
+    };
+
+    const result = validateToolCall(call, tool);
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some(e => e.includes('below minimum')));
+});
+
+test('validateToolCall checks numeric maximum constraint', () => {
+    const tool: Tool = {
+        name: 'test',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                port: { type: 'number', maximum: 65535 },
+            },
+        },
+    };
+
+    const call: ToolCall = {
+        name: 'test',
+        arguments: { port: 99999 },  // Above maximum
+    };
+
+    const result = validateToolCall(call, tool);
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some(e => e.includes('exceeds maximum')));
+});
+
+test('validateToolCall validates integer type', () => {
+    const tool: Tool = {
+        name: 'query-metrics',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                step: { type: 'integer' },
+            },
+        },
+    };
+
+    const call: ToolCall = {
+        name: 'query-metrics',
+        arguments: { step: 60.5 },  // Not an integer!
+    };
+
+    const result = validateToolCall(call, tool);
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some(e => e.includes('must be an integer')));
+});
+
+test('validateToolCall validates string patterns', () => {
+    const tool: Tool = {
+        name: 'test',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                id: { type: 'string', pattern: '^INC-\\d+$' },
+            },
+        },
+    };
+
+    const call: ToolCall = {
+        name: 'test',
+        arguments: { id: 'invalid-format' },
+    };
+
+    const result = validateToolCall(call, tool);
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some(e => e.includes('pattern')));
+});
+
+test('validateToolCall warns about high limits', () => {
+    const tool: Tool = {
+        name: 'query-incidents',
+        inputSchema: { type: 'object', properties: {} },
+    };
+
+    const call: ToolCall = {
+        name: 'query-incidents',
+        arguments: { limit: 5000 },  // Very high limit
+    };
+
+    const result = validateToolCall(call, tool);
+    assert.equal(result.valid, true);  // Valid but warned
+    assert.ok(result.warnings.some(w => w.includes('very high')));
+});
+
+test('validateToolCall rejects negative limits', () => {
+    const tool: Tool = {
+        name: 'query-incidents',
+        inputSchema: { type: 'object', properties: {} },
+    };
+
+    const call: ToolCall = {
+        name: 'query-incidents',
+        arguments: { limit: -5 },
+    };
+
+    const result = validateToolCall(call, tool);
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some(e => e.includes('positive')));
+});
+
+test('validateToolCall provides contextual error messages', () => {
+    const tool: Tool = {
+        name: 'query-metrics',
+        inputSchema: {
+            type: 'object',
+            required: ['expression', 'step'],
+            properties: {
+                expression: { type: 'string' },
+                step: { type: 'integer' },
+            },
+        },
+    };
+
+    const call: ToolCall = {
+        name: 'query-metrics',
+        arguments: {},  // Missing required fields
+    };
+
+    const result = validateToolCall(call, tool);
+    assert.equal(result.valid, false);
+    // Should provide helpful hints
+    assert.ok(result.errors.some(e => e.includes('latency_p95') || e.includes('cpu_usage')));
+    assert.ok(result.errors.some(e => e.includes('60 for 1-minute')));
+});
+
 
 

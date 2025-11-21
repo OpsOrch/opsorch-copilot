@@ -36,9 +36,11 @@ export type CopilotAnswer = {
   evidence?: string[];             // facts, logs, metrics, incidents
   missing?: string[];              // what info is needed next
   references?: CopilotReferences;  // ids/time ranges the console can deep link to
-  data?: any;                      // raw results from tool calls
+  data?: ToolResult[];             // raw results from tool calls
   confidence?: number;             // 0–1 probability
   chatId: string;                 // session continuity
+  correlations?: Correlation[];    // detected correlations between events
+  anomalies?: Anomaly[];           // detected metric anomalies
 };
 
 export type CopilotReferences = {
@@ -81,6 +83,7 @@ export type ConversationTurn = {
   toolResults?: ToolResult[];
   assistantResponse?: string;
   timestamp: number;
+  entities?: Entity[];
 };
 
 export type Conversation = {
@@ -96,3 +99,98 @@ export type ConversationConfig = {
   maxTurnsPerConversation: number;
   conversationTTLMs: number; // Time-to-live for inactive conversations
 };
+
+// EntityExtractor types
+export interface Entity {
+  type: 'incident' | 'service' | 'timestamp' | 'ticket';
+  value: string;
+  extractedAt: number;
+  source: string;
+}
+
+export interface ConversationContext {
+  entities: Map<string, Entity[]>;
+  chatId: string;
+}
+
+// CorrelationDetector types
+export interface CorrelationEvent {
+  timestamp: string;
+  source: 'metric' | 'log' | 'incident';
+  type: string;
+  value?: number;
+  metadata?: Record<string, any>;
+}
+
+export interface Correlation {
+  events: CorrelationEvent[];
+  strength: number;
+  timeDeltaMs: number;
+  description: string;
+}
+
+// TimelineSummarizer types
+export interface TimelineActor {
+  type: 'user' | 'bot' | 'system';
+  name?: string;
+  id?: string;
+}
+
+export interface TimelineEvent {
+  timestamp: string;
+  kind: string;
+  body: string;
+  actor?: TimelineActor;
+  metadata?: Record<string, unknown>;
+}
+
+export interface TimelineSummary {
+  totalEvents: number;
+  summarizedEvents: number;
+  keyEvents: TimelineEvent[];
+  groupedEvents: {
+    type: string;
+    count: number;
+    timeRange: { start: string; end: string };
+  }[];
+  omittedCount: number;
+}
+
+// ScopeInferenceEngine types
+export interface QueryScope {
+  service?: string;
+  environment?: string;
+  region?: string;
+}
+
+export interface ScopeInference {
+  scope: QueryScope;
+  confidence: number;
+  source: 'incident' | 'question' | 'previous_query' | 'default';
+  reason: string;
+}
+
+// AnomalyDetector types
+export interface MetricSeries {
+  timestamps: string[];
+  values: number[];
+  expression: string;
+  service?: string;
+}
+
+export interface Anomaly {
+  timestamp: string;
+  value: number;
+  type: 'spike' | 'drop' | 'outlier';
+  severity: 'low' | 'medium' | 'high';
+  deviationFromMean: number;
+  metric: string;
+}
+
+export interface Trend {
+  direction: 'increasing' | 'decreasing' | 'stable';
+  confidence: number;
+  startTimestamp: string;
+  endTimestamp: string;
+  metric: string;
+}

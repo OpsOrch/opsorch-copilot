@@ -261,92 +261,119 @@ export class OpenAiLlm implements LlmClient {
       store: true,
     };
 
-    const res = await fetch(RESPONSES_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.apiKey}`,
-      },
-      body: JSON.stringify(body),
-    });
+    console.log('[OpenAI] Request:', JSON.stringify({
+      model: body.model,
+      inputMessages: input.length,
+      toolsCount: tools.length,
+      tool_choice: body.tool_choice,
+    }));
 
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`OpenAI error ${res.status}: ${text}`);
-    }
+    try {
+      const res = await fetch(RESPONSES_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.apiKey}`,
+        },
+        body: JSON.stringify(body),
+      });
 
-    const data: any = await res.json();
-    console.log('[OpenAI] raw response:', JSON.stringify(data));
+      if (!res.ok) {
+        const text = await res.text();
+        console.error(`[OpenAI] API error ${res.status}`);
+        console.error(`[OpenAI] Error details:`, text);
 
-    const outputs: any[] = Array.isArray(data.output) ? data.output : [];
-
-    // Extract function calls from Responses output
-    const toolCalls: ToolCall[] = [];
-    for (const item of outputs) {
-      if (item?.type === 'function_call') {
-        const rawArgs = item.arguments ?? '{}';
-        let parsedArgs: any;
-        try {
-          parsedArgs = typeof rawArgs === 'string' ? JSON.parse(rawArgs) : rawArgs;
-        } catch {
-          parsedArgs = {};
-        }
-
-        toolCalls.push({
-          name: item.name,
-          arguments: parsedArgs,
-          callId: typeof item.call_id === 'string' ? item.call_id : undefined,
-        });
-        continue;
+        // Don't throw - return empty response to allow graceful fallback
+        // The planner/synthesis will handle empty responses appropriately
+        console.warn('[OpenAI] Returning empty response to trigger fallback mechanisms');
+        return {
+          content: '',
+          toolCalls: [],
+        };
       }
 
-      if (Array.isArray(item?.content)) {
-        for (const c of item.content) {
-          if (c?.type === 'function_call') {
-            const rawArgs = c.arguments ?? '{}';
-            let parsedArgs: any;
-            try {
-              parsedArgs = typeof rawArgs === 'string' ? JSON.parse(rawArgs) : rawArgs;
-            } catch {
-              parsedArgs = {};
-            }
+      const data: any = await res.json();
+      console.log('[OpenAI] raw response:', JSON.stringify(data));
 
-            toolCalls.push({
-              name: c.name,
-              arguments: parsedArgs,
-              callId: typeof c.call_id === 'string' ? c.call_id : undefined,
-            });
-          }
-        }
-      }
-    }
+      const outputs: any[] = Array.isArray(data.output) ? data.output : [];
 
-    // Extract human-readable text content
-    const contentParts: string[] = [];
-
-    if (typeof data.output_text === 'string') {
-      contentParts.push(data.output_text);
-    } else {
+      // Extract function calls from Responses output
+      const toolCalls: ToolCall[] = [];
       for (const item of outputs) {
-        if (item?.type === 'output_text' && item?.output_text?.text) {
-          contentParts.push(item.output_text.text);
+        if (item?.type === 'function_call') {
+          const rawArgs = item.arguments ?? '{}';
+          let parsedArgs: any;
+          try {
+            parsedArgs = typeof rawArgs === 'string' ? JSON.parse(rawArgs) : rawArgs;
+          } catch {
+            parsedArgs = {};
+          }
+
+          toolCalls.push({
+            name: item.name,
+            arguments: parsedArgs,
+            callId: typeof item.call_id === 'string' ? item.call_id : undefined,
+          });
+          continue;
         }
 
         if (Array.isArray(item?.content)) {
           for (const c of item.content) {
-            if (c?.type === 'output_text' && typeof c.text === 'string') {
-              contentParts.push(c.text);
+            if (c?.type === 'function_call') {
+              const rawArgs = c.arguments ?? '{}';
+              let parsedArgs: any;
+              try {
+                parsedArgs = typeof rawArgs === 'string' ? JSON.parse(rawArgs) : rawArgs;
+              } catch {
+                parsedArgs = {};
+              }
+
+              toolCalls.push({
+                name: c.name,
+                arguments: parsedArgs,
+                callId: typeof c.call_id === 'string' ? c.call_id : undefined,
+              });
             }
           }
         }
       }
+
+      // Extract human-readable text content
+      const contentParts: string[] = [];
+
+      if (typeof data.output_text === 'string') {
+        contentParts.push(data.output_text);
+      } else {
+        for (const item of outputs) {
+          if (item?.type === 'output_text' && item?.output_text?.text) {
+            contentParts.push(item.output_text.text);
+          }
+
+          if (Array.isArray(item?.content)) {
+            for (const c of item.content) {
+              if (c?.type === 'output_text' && typeof c.text === 'string') {
+                contentParts.push(c.text);
+              }
+            }
+          }
+        }
+      }
+
+
+      const content = contentParts.join(' ').trim();
+
+      return {
+        content,
+        toolCalls,
+      };
+    } catch (error) {
+      // Catch ANY error (network, parsing, etc.) and return empty response
+      console.error('[OpenAI] Request failed:', error);
+      console.warn('[OpenAI] Returning empty response due to error');
+      return {
+        content: '',
+        toolCalls: [],
+      };
     }
-
-    const content = contentParts.join(' ').trim();
-
-    return {
-      content,
-      toolCalls,
-    };
   }
 }

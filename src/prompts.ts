@@ -31,12 +31,11 @@ export function buildPlannerPrompt(toolContext: string): string {
   return (
     `${buildSystemPrompt()}\n\n${toolContext}\n\n${fewShotGuidelines}\n\n` +
     'YOUR TASK (Planning):\n' +
-    '• Review the user question and conversation history carefully\n' +
-    '• Propose 1-3 runnable tool calls with concrete arguments (NO placeholders)\n' +
+    '• First, briefly explain your reasoning: what are you trying to accomplish and why?\n' +
+    '• Then propose 1-3 runnable tool calls with concrete arguments (NO placeholders)\n' +
     '• If the user references "this service" or "that incident", use the actual names/IDs from history\n' +
     '• Include time windows when querying temporal data (logs, metrics, incidents)\n' +
-    '• Combine related queries (e.g., logs + metrics) when investigating root causes\n' +
-    '• Return standard tool call format - the system will execute and provide results'
+    '• Combine related queries (e.g., logs + metrics) when investigating root causes'
   );
 }
 
@@ -47,7 +46,18 @@ export function buildJsonPlannerPrompt(toolList: string): string {
     'Select the best MCP tools to answer the user\'s question and return ONLY valid JSON.',
     '',
     'Output format (strict JSON):',
-    '{"toolCalls":[{"name":"tool-name","arguments":{...}}]}',
+    '{',
+    '  "reasoning": "Brief explanation of your approach",',
+    '  "toolCalls": [',
+    '    {"name": "tool-name", "arguments": {...}}',
+    '  ]',
+    '}',
+    '',
+    'Example:',
+    '{',
+    '  "reasoning": "User wants recent incidents for payment service, so querying incidents with service filter",',
+    '  "toolCalls": [{"name": "query-incidents", "arguments": {"service": "payment-api", "limit": 10}}]',
+    '}',
     '',
     'Rules:',
     '• Include 1-3 tool calls maximum - fewer is better when sufficient',
@@ -65,6 +75,11 @@ export function buildRefinementPrompt(toolContext: string, resultCount: number):
     '',
     `You have already executed ${resultCount} tool call(s) and received results.`,
     'Review these results and the original question.',
+    '',
+    'IMPORTANT: Tool results may include errors. Learn from them:',
+    '• If a tool failed, consider why and try an alternative approach',
+    '• Adjust parameters (e.g., widen time window, change service scope)',
+    '• Use different tools that might achieve the same goal',
     '',
     'YOUR TASK:',
     '• Determine if additional tool calls would materially improve the answer',

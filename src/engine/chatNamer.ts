@@ -1,208 +1,515 @@
-/**
- * ChatNamer generates human-readable names for conversations using heuristic-based pattern matching.
- * 
- * Uses pattern matching and keyword extraction to create meaningful conversation titles
- * without requiring LLM calls, keeping costs low and performance high.
- */
-
 export interface ChatNamerConfig {
   maxLength: number;
 }
 
-const DEFAULT_CONFIG: ChatNamerConfig = {
-  maxLength: 60,
-};
+interface ExtractedEntities {
+  incidents: string[];
+  services: string[];
+  metrics: string[];
+  timeRanges: string[];
+  topics: string[];
+}
 
 export class ChatNamer {
   private readonly config: ChatNamerConfig;
 
-  constructor(config: Partial<ChatNamerConfig> = {}) {
-    this.config = { ...DEFAULT_CONFIG, ...config };
+  constructor(config: ChatNamerConfig = { maxLength: 60 }) {
+    this.config = config;
   }
 
   /**
-   * Generate a conversation name based on the first user message.
-   * Uses heuristics to extract meaningful names.
+   * Generate a conversation name based on the user message and LLM response.
+   * Analyzes both inputs to extract the most meaningful name.
    */
-  generateName(userMessage: string, timestamp: number): string {
-    // Apply heuristics in priority order
-    const heuristicName = this.applyHeuristics(userMessage);
+  generateName(
+    userMessage: string,
+    llmResponse: string,
+    timestamp: number
+  ): string {
+    const startTime = Date.now();
 
-    // Fall back to message preview if no heuristic matches
-    const name = heuristicName || this.createFallbackName(userMessage, timestamp);
+    // Extract entities from both user message and LLM response
+    const responseEntities = this.extractEntitiesFromResponse(llmResponse);
+    const userEntities = this.extractEntitiesFromResponse(userMessage);
 
-    // Sanitize and return
-    const sanitized = this.sanitizeName(name);
+    // Merge entities (prioritize response entities, then user entities)
+    const mergedEntities: ExtractedEntities = {
+      incidents: [
+        ...new Set([...responseEntities.incidents, ...userEntities.incidents]),
+      ],
+      services: [
+        ...new Set([...responseEntities.services, ...userEntities.services]),
+      ],
+      metrics: [
+        ...new Set([...responseEntities.metrics, ...userEntities.metrics]),
+      ],
+      timeRanges: [
+        ...new Set([
+          ...responseEntities.timeRanges,
+          ...userEntities.timeRanges,
+        ]),
+      ],
+      topics: [
+        ...new Set([...userEntities.topics, ...responseEntities.topics]),
+      ],
+    };
 
-    console.log(`[ChatNamer] Generated name: "${sanitized}" (heuristic: ${heuristicName ? 'matched' : 'fallback'})`);
+    // Determine intent from user message
+    const intent = this.determineIntent(userMessage);
 
-    return sanitized;
+    // Try to synthesize a name
+    let name = this.synthesizeName(mergedEntities, intent, userMessage);
+
+    // Fall back if synthesis didn't produce a name
+    if (!name || name.trim().length === 0) {
+      name = this.createFallbackName(userMessage, timestamp);
+    }
+
+    // Sanitize the final name
+    const sanitizedName = this.sanitizeName(name);
+
+    // Log the result
+    const executionTime = Date.now() - startTime;
+    console.log('[ChatNamer]', {
+      name: sanitizedName,
+      entities: mergedEntities,
+      intent,
+      executionTime: `${executionTime}ms`,
+    });
+
+    return sanitizedName;
   }
 
   /**
-   * Apply pattern-based heuristics to extract a name.
-   * Returns null if no heuristic matches.
+   * Extract key entities from the LLM response (incidents, services, metrics).
    */
-  private applyHeuristics(message: string): string | null {
-    // Priority order: service → metric → question type
-    return (
-      this.extractServiceName(message) ||
-      this.extractMetricOrLogQuery(message) ||
-      this.extractQuestionType(message) ||
-      null
-    );
+  private extractEntitiesFromResponse(response: string): ExtractedEntities {
+    if (!response || response.trim().length === 0) {
+      return {
+        incidents: [],
+        services: [],
+        metrics: [],
+        timeRanges: [],
+        topics: [],
+      };
+    }
+
+    return {
+      incidents: this.extractIncidents(response),
+      services: this.extractServices(response),
+      metrics: this.extractMetrics(response),
+      timeRanges: this.extractTimeRanges(response),
+      topics: this.extractTopics(response),
+    };
   }
 
   /**
-   * Extract service names (payment-service, checkout-api, etc.)
+   * Extract incident references from text (INC-12345, incident-123, etc.)
    */
-  private extractServiceName(message: string): string | null {
-    // Pattern: service-name, api-name, worker-name, job-name
-    const servicePattern = /([a-z][\w-]+)-(service|api|worker|job)\b/i;
-    const match = message.match(servicePattern);
+  private extractIncidents(text: string): string[] {
+    const incidents: string[] = [];
 
-    if (!match) {
-      return null;
-    }
-
-    const serviceName = match[0];
-    const formattedName = this.toTitleCase(serviceName.replace(/-/g, ' '));
-
-    // Try to extract action context
-    const lowerMessage = message.toLowerCase();
-
-    if (lowerMessage.includes('log')) {
-      return `${formattedName} Logs`;
-    }
-    if (lowerMessage.includes('error') || lowerMessage.includes('5xx') || lowerMessage.includes('fail')) {
-      return `${formattedName} Errors`;
-    }
-    if (lowerMessage.includes('incident')) {
-      return `${formattedName} Incidents`;
-    }
-    if (lowerMessage.includes('metric') || lowerMessage.includes('latency') || lowerMessage.includes('cpu') || lowerMessage.includes('memory')) {
-      return `${formattedName} Metrics`;
-    }
-    if (lowerMessage.includes('deploy')) {
-      return `${formattedName} Deployment`;
+    // Pattern: INC-12345
+    const incPattern = /INC-\d+/gi;
+    const incMatches = text.match(incPattern);
+    if (incMatches) {
+      incidents.push(...incMatches.map((m) => m.toUpperCase()));
     }
 
-    // Default: just the service name
-    return formattedName;
+    // Pattern: incident-123 or incident 123
+    const incidentPattern = /incident[- ]?(\d+)/gi;
+    const incidentMatches = text.matchAll(incidentPattern);
+    for (const match of incidentMatches) {
+      incidents.push(`incident-${match[1]}`);
+    }
+
+    // Pattern: #1234 (at least 4 digits)
+    const hashPattern = /#(\d{4,})/g;
+    const hashMatches = text.matchAll(hashPattern);
+    for (const match of hashMatches) {
+      incidents.push(`#${match[1]}`);
+    }
+
+    // Remove duplicates
+    return [...new Set(incidents)];
   }
 
   /**
-   * Extract metric/log queries
+   * Extract service names from text (payment-service, checkout-api, etc.)
    */
-  private extractMetricOrLogQuery(message: string): string | null {
-    const lowerMessage = message.toLowerCase();
+  private extractServices(text: string): string[] {
+    const services: string[] = [];
 
-    // Detect correlation patterns
-    const correlationPatterns = [
-      { pattern: /\b(cpu|memory|latency|disk|network)\s+(vs|versus|and|with)\s+(cpu|memory|latency|disk|network)\b/i, format: 'Correlation' },
-      { pattern: /correlat\w*\s+.*?\b(cpu|memory|latency|disk|network)\b/i, format: 'Correlation' },
-      { pattern: /\b(cpu|memory|latency|disk|network)\s+correlat/i, format: 'Correlation' },
-    ];
+    // Pattern: service-name, api-name, worker-name, function-name
+    const servicePattern =
+      /\b([a-z][a-z0-9]*(?:-[a-z0-9]+)*)-(?:service|api|worker|job|function)\b/gi;
+    const matches = text.matchAll(servicePattern);
 
-    for (const { pattern, format } of correlationPatterns) {
-      const match = message.match(pattern);
-      if (match) {
-        // Extract the metrics mentioned
-        const metrics = message.match(/\b(cpu|memory|latency|disk|network|p95|p99|errors?|5xx)\b/gi);
-        if (metrics && metrics.length >= 2) {
-          const uniqueMetrics = [...new Set(metrics.map(m => this.toTitleCase(m)))];
-          return `${uniqueMetrics.slice(0, 2).join(' and ')} ${format}`;
-        }
-        return `Metric ${format}`;
-      }
+    for (const match of matches) {
+      services.push(match[0].toLowerCase());
     }
 
-    // Detect specific metrics
+    // Remove duplicates
+    return [...new Set(services)];
+  }
+
+  /**
+   * Extract metrics from text (CPU, latency, p95, errors, etc.)
+   */
+  private extractMetrics(text: string): string[] {
+    const metrics: string[] = [];
+    const lowerText = text.toLowerCase();
+
     const metricKeywords = [
-      { keywords: ['p95', 'p99', 'percentile'], name: 'Percentile' },
-      { keywords: ['latency', 'response time'], name: 'Latency' },
-      { keywords: ['cpu'], name: 'CPU' },
-      { keywords: ['memory', 'ram'], name: 'Memory' },
-      { keywords: ['5xx', '500', 'error'], name: 'Errors' },
-      { keywords: ['disk', 'storage'], name: 'Disk' },
-      { keywords: ['network', 'bandwidth'], name: 'Network' },
+      'latency',
+      'cpu',
+      'memory',
+      'error',
+      '5xx',
+      '4xx',
+      'p95',
+      'p99',
+      'p50',
+      'throughput',
+      'request',
+      'response time',
+      'disk',
+      'network',
+      'timeout',
     ];
 
-    for (const { keywords, name } of metricKeywords) {
-      if (keywords.some(kw => lowerMessage.includes(kw))) {
-        // Check for spike/increase/decrease context
-        if (lowerMessage.includes('spike')) {
-          return `${name} Spike`;
+    for (const keyword of metricKeywords) {
+      if (lowerText.includes(keyword)) {
+        // Normalize plural forms
+        const normalized = keyword.endsWith('s') && keyword !== 'p95' && keyword !== 'p99' && keyword !== 'p50'
+          ? keyword.slice(0, -1)
+          : keyword;
+        if (!metrics.includes(normalized)) {
+          metrics.push(normalized);
         }
-        if (lowerMessage.includes('increase') || lowerMessage.includes('high')) {
-          return `${name} Increase`;
-        }
-        if (lowerMessage.includes('decrease') || lowerMessage.includes('low')) {
-          return `${name} Decrease`;
-        }
-        if (lowerMessage.includes('anomal')) {
-          return `${name} Anomaly`;
-        }
-        // Default metric query
-        return `${name} Analysis`;
       }
+    }
+
+    return metrics;
+  }
+
+  /**
+   * Extract topic/domain from text (payment, checkout, database, etc.)
+   */
+  private extractTopics(text: string): string[] {
+    const topics: string[] = [];
+    const lowerText = text.toLowerCase();
+
+    const topicKeywords = [
+      'payment',
+      'payments',
+      'checkout',
+      'billing',
+      'order',
+      'orders',
+      'database',
+      'cache',
+      'auth',
+      'authentication',
+      'webhook',
+      'webhooks',
+      'api',
+      'gateway',
+    ];
+
+    for (const keyword of topicKeywords) {
+      if (lowerText.includes(keyword)) {
+        // Normalize plural forms
+        const normalized = keyword.endsWith('s') ? keyword.slice(0, -1) : keyword;
+        if (!topics.includes(normalized)) {
+          topics.push(normalized);
+        }
+      }
+    }
+
+    return topics;
+  }
+
+  /**
+   * Extract time ranges from text (last 30 minutes, between X and Y, etc.)
+   */
+  private extractTimeRanges(text: string): string[] {
+    const timeRanges: string[] = [];
+
+    // Pattern: last N minutes/hours/days
+    const lastPattern = /last\s+(\d+)\s+(minute|hour|day|min|hr)s?/gi;
+    const lastMatches = text.matchAll(lastPattern);
+    for (const match of lastMatches) {
+      const num = match[1];
+      const unit = match[2].toLowerCase();
+      const shortUnit = unit.startsWith('min')
+        ? 'm'
+        : unit.startsWith('h')
+          ? 'h'
+          : 'd';
+      timeRanges.push(`Last ${num}${shortUnit}`);
+    }
+
+    // Pattern: past hour/day
+    const pastPattern = /past\s+(hour|day|week)/gi;
+    const pastMatches = text.matchAll(pastPattern);
+    for (const match of pastMatches) {
+      timeRanges.push(`Past ${match[1]}`);
+    }
+
+    // Keyword: recent
+    if (/\brecent\b/i.test(text)) {
+      timeRanges.push('Recent');
+    }
+
+    return timeRanges;
+  }
+
+  /**
+   * Determine the question intent from user message
+   */
+  private determineIntent(userMessage: string): string | null {
+    const lowerMessage = userMessage.toLowerCase();
+
+    // Root cause analysis
+    if (
+      /what caused/i.test(lowerMessage) ||
+      /why did/i.test(lowerMessage) ||
+      /what happened/i.test(lowerMessage) ||
+      /root cause/i.test(lowerMessage)
+    ) {
+      return 'root-cause';
+    }
+
+    // Investigation
+    if (
+      /show me/i.test(lowerMessage) ||
+      /\bfind\b/i.test(lowerMessage) ||
+      /search/i.test(lowerMessage) ||
+      /look for/i.test(lowerMessage)
+    ) {
+      return 'investigation';
+    }
+
+    // Correlation
+    if (
+      /compare/i.test(lowerMessage) ||
+      /correlat/i.test(lowerMessage) ||
+      /relationship between/i.test(lowerMessage) ||
+      /\bvs\b/i.test(lowerMessage)
+    ) {
+      return 'correlation';
+    }
+
+    // Status check
+    if (
+      /^is\b/i.test(lowerMessage) ||
+      /^are\b/i.test(lowerMessage) ||
+      /status of/i.test(lowerMessage) ||
+      /health of/i.test(lowerMessage)
+    ) {
+      return 'status-check';
+    }
+
+    // Troubleshooting
+    if (
+      /\bfix\b/i.test(lowerMessage) ||
+      /resolve/i.test(lowerMessage) ||
+      /debug/i.test(lowerMessage) ||
+      /issue with/i.test(lowerMessage) ||
+      /problem with/i.test(lowerMessage)
+    ) {
+      return 'troubleshooting';
     }
 
     return null;
   }
 
   /**
-   * Extract question type and topic
+   * Generate name from extracted entities and intent
    */
-  private extractQuestionType(message: string): string | null {
-    const lowerMessage = message.toLowerCase();
+  private synthesizeName(
+    entities: ExtractedEntities,
+    intent: string | null,
+    userMessage: string
+  ): string {
+    const { incidents, services, metrics, timeRanges, topics } = entities;
 
-    // Question type patterns with topic extraction
-    const patterns = [
-      {
-        pattern: /what\s+caused\s+(?:the\s+)?(.+?)(?:\?|$)/i,
-        format: (topic: string) => `${this.toTitleCase(topic)} Root Cause`,
-      },
-      {
-        pattern: /why\s+(?:is|did|does|was)\s+(.+?)(?:\?|$)/i,
-        format: (topic: string) => `${this.toTitleCase(topic)} Investigation`,
-      },
-      {
-        pattern: /show\s+(?:me\s+)?recent\s+(.+?)(?:\?|$)/i,
-        format: (topic: string) => `Recent ${this.toTitleCase(topic)}`,
-      },
-      {
-        pattern: /show\s+(?:me\s+)?(.+?)(?:\?|$)/i,
-        format: (topic: string) => `${this.toTitleCase(topic)} Query`,
-      },
-      {
-        pattern: /(?:list|find)\s+(.+?)(?:\?|$)/i,
-        format: (topic: string) => `${this.toTitleCase(topic)} Search`,
-      },
-      {
-        pattern: /compare\s+(.+?)(?:\?|$)/i,
-        format: (topic: string) => `${this.toTitleCase(topic)} Comparison`,
-      },
-      {
-        pattern: /explain\s+(.+?)(?:\?|$)/i,
-        format: (topic: string) => `${this.toTitleCase(topic)} Explanation`,
-      },
-    ];
-
-    for (const { pattern, format } of patterns) {
-      const match = message.match(pattern);
-      if (match && match[1]) {
-        let topic = match[1].trim();
-        // Clean up the topic (remove extra words, limit length)
-        topic = topic.split(/\s+/).slice(0, 4).join(' ');
-        if (topic.length > 30) {
-          topic = topic.substring(0, 30);
-        }
-        return format(topic);
-      }
+    // Priority 1: Topic + Multiple Services (e.g., "Payment Checkout and Webhook Issues")
+    if (topics.length > 0 && services.length >= 2) {
+      const topic = this.formatTopicName(topics[0]);
+      const service1 = this.formatServiceName(services[0]).split(' ')[0]; // Get first word
+      const service2 = this.formatServiceName(services[1]).split(' ')[0];
+      return `${topic} ${service1} and ${service2} Issues`;
     }
 
-    return null;
+    // Priority 2: Topic + Service + Metric (e.g., "Payment Checkout Latency")
+    if (topics.length > 0 && services.length > 0 && metrics.length > 0) {
+      const topic = this.formatTopicName(topics[0]);
+      const service = this.formatServiceName(services[0]).split(' ')[0];
+      const metric = this.formatMetricName(metrics[0]);
+      return `${topic} ${service} ${metric}`;
+    }
+
+    // Priority 3: Topic + Multiple Metrics (e.g., "Payment Latency and Timeout Issues")
+    if (topics.length > 0 && metrics.length >= 2) {
+      const topic = this.formatTopicName(topics[0]);
+      const metric1 = this.formatMetricName(metrics[0]);
+      const metric2 = this.formatMetricName(metrics[1]);
+      return `${topic} ${metric1} and ${metric2}`;
+    }
+
+    // Priority 4: Topic + Service (e.g., "Payment Checkout Issues")
+    if (topics.length > 0 && services.length > 0) {
+      const topic = this.formatTopicName(topics[0]);
+      const service = this.formatServiceName(services[0]).split(' ')[0];
+      return `${topic} ${service} Issues`;
+    }
+
+    // Priority 5: Topic + Metric (e.g., "Payment Timeout Issues")
+    if (topics.length > 0 && metrics.length > 0) {
+      const topic = this.formatTopicName(topics[0]);
+      const metric = this.formatMetricName(metrics[0]);
+      return `${topic} ${metric} Issues`;
+    }
+
+    // Priority 6: Topic + Problems/Issues (e.g., "Payment Service Issues")
+    if (topics.length > 0 && /problem|issue|error|fail/i.test(userMessage)) {
+      const topic = this.formatTopicName(topics[0]);
+      return `${topic} Service Issues`;
+    }
+
+    // Priority 7: Topic + Intent (e.g., "Payment Investigation")
+    if (topics.length > 0 && intent) {
+      const topic = this.formatTopicName(topics[0]);
+      const intentLabel = this.getIntentLabel(intent);
+      return `${topic} ${intentLabel}`;
+    }
+
+    // Priority 8: Incident + Service + Metric (most descriptive)
+    if (incidents.length > 0 && services.length > 0 && metrics.length > 0) {
+      const service = this.formatServiceName(services[0]);
+      const metric = this.formatMetricName(metrics[0]);
+      return `${service} ${metric} Issue`;
+    }
+
+    // Priority 9: Incident + Service
+    if (incidents.length > 0 && services.length > 0) {
+      const service = this.formatServiceName(services[0]);
+      return `${service} Incident`;
+    }
+
+    // Priority 10: Incident + Metric
+    if (incidents.length > 0 && metrics.length > 0) {
+      const metric = this.formatMetricName(metrics[0]);
+      return `${metric} Incident`;
+    }
+
+    // Priority 11: Service + Metric + Intent
+    if (services.length > 0 && metrics.length > 0 && intent) {
+      const service = this.formatServiceName(services[0]);
+      const metric = this.formatMetricName(metrics[0]);
+      const intentLabel = this.getIntentLabel(intent);
+      return `${service} ${metric} ${intentLabel}`;
+    }
+
+    // Priority 12: Metric Correlation
+    if (metrics.length >= 2 && intent === 'correlation') {
+      const metric1 = this.formatMetricName(metrics[0]);
+      const metric2 = this.formatMetricName(metrics[1]);
+      return `${metric1} and ${metric2} Correlation`;
+    }
+
+    // Priority 13: Service + Intent
+    if (services.length > 0 && intent) {
+      const service = this.formatServiceName(services[0]);
+      const intentLabel = this.getIntentLabel(intent);
+      return `${service} ${intentLabel}`;
+    }
+
+    // Priority 14: Service + Metric (no intent)
+    if (services.length > 0 && metrics.length > 0) {
+      const service = this.formatServiceName(services[0]);
+      const metric = this.formatMetricName(metrics[0]);
+      return `${service} ${metric}`;
+    }
+
+    // Priority 15: Topic Only (e.g., "Payment Analysis")
+    if (topics.length > 0) {
+      const topic = this.formatTopicName(topics[0]);
+      return `${topic} Analysis`;
+    }
+
+    // Priority 16: Service Only
+    if (services.length > 0) {
+      const service = this.formatServiceName(services[0]);
+      return `${service} Analysis`;
+    }
+
+    // Priority 17: Metric + Time Range
+    if (metrics.length > 0 && timeRanges.length > 0) {
+      const metric = this.formatMetricName(metrics[0]);
+      const timeRange = timeRanges[0];
+      return `${metric} (${timeRange})`;
+    }
+
+    // Priority 18: Metric Only
+    if (metrics.length > 0) {
+      const metric = this.formatMetricName(metrics[0]);
+      return `${metric} Analysis`;
+    }
+
+    // Priority 19: Intent + Topic
+    if (intent) {
+      const intentLabel = this.getIntentLabel(intent);
+      return intentLabel;
+    }
+
+    // Priority 20: Incident Only (last resort - just use the ID)
+    if (incidents.length > 0) {
+      return incidents[0];
+    }
+
+    // No synthesis possible
+    return '';
+  }
+
+  private formatTopicName(topic: string): string {
+    // Convert "payment" to "Payment", "checkout" to "Checkout"
+    return topic.charAt(0).toUpperCase() + topic.slice(1);
+  }
+
+  private formatServiceName(service: string): string {
+    // Convert "payment-service" to "Payment Service"
+    return service
+      .split('-')
+      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+      .join(' ');
+  }
+
+  private formatMetricName(metric: string): string {
+    // Convert "cpu" to "CPU", "p95" to "P95", etc.
+    const upper = metric.toUpperCase();
+    if (
+      upper === 'CPU' ||
+      upper === 'P95' ||
+      upper === 'P99' ||
+      upper === 'P50'
+    ) {
+      return upper;
+    }
+    return metric.charAt(0).toUpperCase() + metric.slice(1);
+  }
+
+  private getIntentLabel(intent: string): string {
+    const labels: Record<string, string> = {
+      'root-cause': 'Root Cause',
+      investigation: 'Investigation',
+      correlation: 'Correlation',
+      'status-check': 'Status Check',
+      troubleshooting: 'Troubleshooting',
+    };
+    return labels[intent] || 'Analysis';
   }
 
   /**
@@ -210,29 +517,27 @@ export class ChatNamer {
    */
   private createFallbackName(userMessage: string, timestamp: number): string {
     if (!userMessage || userMessage.trim().length === 0) {
-      // Empty message - use timestamp
+      // Use timestamp-based name
       const date = new Date(timestamp);
-      return `Conversation ${date.toLocaleString('en-US', {
+      const formatted = date.toLocaleString('en-US', {
         month: 'short',
         day: 'numeric',
         hour: 'numeric',
-        minute: '2-digit'
-      })}`;
+        minute: '2-digit',
+      });
+      return `General Query (${formatted})`;
     }
 
     // Take first 40 characters and apply title case
-    let preview = userMessage.trim();
-    if (preview.length > 40) {
-      preview = preview.substring(0, 40);
-      // Try to break at word boundary
-      const lastSpace = preview.lastIndexOf(' ');
-      if (lastSpace > 20) {
-        preview = preview.substring(0, lastSpace);
-      }
-      preview = preview + '...';
+    const preview = userMessage.slice(0, 40).trim();
+    const titleCased = this.toTitleCase(preview);
+
+    // Add ellipsis if truncated
+    if (userMessage.length > 40) {
+      return `${titleCased}...`;
     }
 
-    return this.toTitleCase(preview);
+    return titleCased;
   }
 
   /**
@@ -247,13 +552,17 @@ export class ChatNamer {
 
     // Truncate to maxLength if needed
     if (sanitized.length > this.config.maxLength) {
-      sanitized = sanitized.substring(0, this.config.maxLength - 3);
-      // Try to break at word boundary
-      const lastSpace = sanitized.lastIndexOf(' ');
-      if (lastSpace > this.config.maxLength - 20) {
-        sanitized = sanitized.substring(0, lastSpace);
+      // Find a good break point (space) near the limit
+      const truncated = sanitized.slice(0, this.config.maxLength - 3);
+      const lastSpace = truncated.lastIndexOf(' ');
+
+      if (lastSpace > this.config.maxLength * 0.7) {
+        // Use the space if it's not too far back
+        return truncated.slice(0, lastSpace) + '...';
+      } else {
+        // Just truncate at the limit
+        return truncated + '...';
       }
-      sanitized = sanitized + '...';
     }
 
     return sanitized;
@@ -263,22 +572,37 @@ export class ChatNamer {
    * Convert to title case.
    */
   private toTitleCase(text: string): string {
-    // Words that should stay lowercase (unless first word)
-    const lowercase = new Set(['a', 'an', 'and', 'as', 'at', 'but', 'by', 'for', 'in', 'of', 'on', 'or', 'the', 'to', 'with']);
+    const smallWords = new Set([
+      'a',
+      'an',
+      'and',
+      'as',
+      'at',
+      'but',
+      'by',
+      'for',
+      'in',
+      'of',
+      'on',
+      'or',
+      'the',
+      'to',
+      'with',
+    ]);
 
     return text
       .toLowerCase()
-      .split(/\s+/)
+      .split(' ')
       .map((word, index) => {
         // Always capitalize first word
         if (index === 0) {
           return word.charAt(0).toUpperCase() + word.slice(1);
         }
-        // Keep lowercase words lowercase unless they're the first word
-        if (lowercase.has(word)) {
+        // Don't capitalize small words unless they're first
+        if (smallWords.has(word)) {
           return word;
         }
-        // Capitalize other words
+        // Capitalize everything else
         return word.charAt(0).toUpperCase() + word.slice(1);
       })
       .join(' ');

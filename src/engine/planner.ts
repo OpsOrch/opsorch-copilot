@@ -13,6 +13,7 @@ import {
   buildToolContext,
 } from '../prompts.js';
 import { inferPlanFromQuestion } from './planFallback.js';
+import { ContextManager } from './contextManager.js';
 
 export type PlannerResponse = {
   toolCalls: ToolCall[];
@@ -167,14 +168,10 @@ function inferPlan(question: string): ToolCall[] {
   return inferPlanFromQuestion(question).slice(0, MAX_PLANNER_CALLS);
 }
 
-function summarizeResults(results: ToolResult[]): string {
-  return results
-    .map((r) => {
-      const payload =
-        typeof r.result === 'string' ? r.result : JSON.stringify(r.result);
-      const trimmed = payload.length > 600 ? `${payload.slice(0, 600)}…` : payload;
-      return `${r.name}: ${trimmed}`;
-    })
-    .join('\n');
-}
+const contextManager = new ContextManager();
 
+function summarizeResults(results: ToolResult[]): string {
+  // Use ContextManager for intelligent condensation that preserves structure
+  // Allocate ~2000 tokens for results (leaves room for prompts and conversation history)
+  return contextManager.condenseResults(results, 2000);
+}

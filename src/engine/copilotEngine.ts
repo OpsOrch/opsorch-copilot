@@ -20,6 +20,9 @@ import { runToolCalls } from './toolRunner.js';
 import { ResultCache } from './resultCache.js';
 import { ConversationManager } from './conversationManager.js';
 import { ChatNamer } from './chatNamer.js';
+import { ExecutionTracer, ExecutionTrace } from './executionTracer.js';
+import { EntityExtractor } from './entityExtractor.js';
+import { ParallelToolRunner } from './parallelToolRunner.js';
 
 const DEFAULT_MAX_ITERATIONS = 3;
 const MAX_TOOL_CALLS_PER_ITERATION = 3;
@@ -45,6 +48,9 @@ export class CopilotEngine {
   private readonly resultCache: ResultCache;
   private readonly conversationManager: ConversationManager;
   private readonly chatNamer: ChatNamer;
+  private readonly executionTracer: ExecutionTracer;
+  private readonly entityExtractor: EntityExtractor;
+  private readonly parallelToolRunner: ParallelToolRunner;
   private readonly maxIterations: number;
 
   constructor(private readonly config: RuntimeConfig) {
@@ -52,6 +58,9 @@ export class CopilotEngine {
     this.resultCache = new ResultCache();
     this.conversationManager = new ConversationManager();
     this.chatNamer = new ChatNamer();
+    this.executionTracer = new ExecutionTracer();
+    this.entityExtractor = new EntityExtractor();
+    this.parallelToolRunner = new ParallelToolRunner();
     this.maxIterations = config.maxIterations ?? DEFAULT_MAX_ITERATIONS;
   }
 
@@ -75,12 +84,44 @@ export class CopilotEngine {
   }
 
   /**
+   * Format tool results for LLM planning context, including error information.
+   * This helps the LLM learn from failures and adjust strategy.
+   */
+  private formatResultsForPlanning(results: ToolResult[]): ToolResult[] {
+    return results.map(result => {
+      const isError = typeof result.result === 'object' &&
+        result.result !== null &&
+        'error' in result.result;
+
+      if (!isError) {
+        return result; // Pass successful results as-is
+      }
+
+      // Format error results with helpful context
+      const errorObj = result.result as { error: any };
+      const errorMessage = typeof errorObj.error === 'string'
+        ? errorObj.error
+        : JSON.stringify(errorObj.error);
+
+      return {
+        ...result,
+        result: {
+          error: errorMessage,
+          context: `Tool '${result.name}' failed. Consider trying an alternative approach or adjusting parameters.`,
+          originalArguments: result.arguments || {}
+        }
+      };
+    });
+  }
+
+  /**
    * Execute tool calls with caching support to avoid redundant requests.
    */
   private async runToolCallsWithCache(
     calls: ToolCall[],
     chatId: string,
-    tools: Tool[]
+    tools: Tool[],
+    trace?: ExecutionTrace
   ): Promise<ToolResult[]> {
     const results: ToolResult[] = [];
     const callsToExecute: ToolCall[] = [];
@@ -91,33 +132,87 @@ export class CopilotEngine {
       if (cached) {
         console.log(`[Copilot][${chatId}] Using cached result for ${call.name}`);
         results.push(cached);
+
+        // Record cache hit in trace
+        if (trace) {
+          const resultSize = JSON.stringify(cached.result).length;
+          this.executionTracer.recordToolExecution(trace, {
+            toolName: call.name,
+            cacheHit: true,
+            executionTimeMs: 0,
+            resultSizeBytes: resultSize,
+            success: true,
+          });
+        }
       } else {
         callsToExecute.push(call);
       }
     }
 
-    // Step 2: Execute uncached calls
+    // Step 2: Execute uncached calls (with parallel execution where possible)
     if (callsToExecute.length > 0) {
-      const freshResults = await runToolCalls(
-        callsToExecute,
-        this.mcp,
-        chatId,
-        tools,
-      );
+      const executionStart = Date.now();
+
+      // Analyze dependencies and execute in parallel where possible
+      const dependencies = this.parallelToolRunner.analyzeDependencies(callsToExecute);
+      const canParallelize = dependencies.every(d => d.dependsOn.length === 0);
+
+      let freshResults: ToolResult[];
+      if (canParallelize && callsToExecute.length > 1) {
+        console.log(`[Copilot][${chatId}] Executing ${callsToExecute.length} tools in parallel (no dependencies)`);
+        freshResults = await this.parallelToolRunner.executeWithDependencies(
+          dependencies,
+          this.mcp,
+          chatId,
+          tools
+        );
+      } else if (callsToExecute.length > 1) {
+        console.log(`[Copilot][${chatId}] Executing ${callsToExecute.length} tools with dependency ordering`);
+        freshResults = await this.parallelToolRunner.executeWithDependencies(
+          dependencies,
+          this.mcp,
+          chatId,
+          tools
+        );
+      } else {
+        // Single tool - execute directly
+        freshResults = await runToolCalls(
+          callsToExecute,
+          this.mcp,
+          chatId,
+          tools,
+        );
+      }
+
+      const executionTime = Date.now() - executionStart;
 
       // Step 3: Cache successful results and add to results array
       for (let i = 0; i < callsToExecute.length; i++) {
         const result = freshResults[i];
         if (!result) continue; // Skip if somehow undefined
 
-        // Only cache if not an error
-        if (
-          typeof result.result === 'object' &&
+        const isError = typeof result.result === 'object' &&
           result.result !== null &&
-          !('error' in result.result)
-        ) {
+          'error' in result.result;
+
+        // Only cache if not an error
+        if (!isError) {
           this.resultCache.set(callsToExecute[i], result);
         }
+
+        // Record tool execution in trace
+        if (trace) {
+          const resultSize = JSON.stringify(result.result).length;
+          this.executionTracer.recordToolExecution(trace, {
+            toolName: callsToExecute[i].name,
+            cacheHit: false,
+            executionTimeMs: Math.round(executionTime / callsToExecute.length), // Approximate per-tool time
+            resultSizeBytes: resultSize,
+            success: !isError,
+            error: isError ? String((result.result as any).error) : undefined,
+          });
+        }
+
         results.push(result);
       }
     }
@@ -142,6 +237,9 @@ export class CopilotEngine {
     // Step 2: Generate or use provided chatId
     const chatId = opts?.chatId ?? randomUUID();
 
+    // Step 3: Start execution trace
+    const trace = this.executionTracer.startTrace(chatId);
+
     console.log(`[Copilot][${chatId}] Received question: ${question}`);
 
     // Periodic cache cleanup
@@ -158,9 +256,20 @@ export class CopilotEngine {
       console.log(`[Copilot][${chatId}] Starting new conversation`);
     }
 
+    // Step 4: Get entities from conversation and resolve references in question
+    const entityContext = await this.conversationManager.getEntities(chatId);
+    const resolutions = this.entityExtractor.resolveReference(question, entityContext);
+    const resolvedQuestion = this.entityExtractor.applyResolutions(question, resolutions);
 
+    if (resolutions.size > 0) {
+      console.log(`[Copilot][${chatId}] Resolved ${resolutions.size} entity reference(s) in question`);
+    }
+
+    // Use resolved question for planning
+    const questionForPlanning = resolvedQuestion;
 
     const allResults: ToolResult[] = [];
+    const allExtractedEntities: any[] = [];
     let iteration = 0;
     let isFirstIteration = true;
 
@@ -170,47 +279,76 @@ export class CopilotEngine {
       console.log(`[Copilot][${chatId}] Starting iteration ${iteration}/${this.maxIterations}`);
 
       let plannedCalls: ToolCall[] = [];
+      const iterationStartTime = Date.now();
 
       // A. Plan
       if (isFirstIteration && isNewConversation) {
         // Initial plan for new conversation
         const plan = await requestInitialPlan(
-          question,
+          questionForPlanning,
           this.config.llm,
           this.mcp.getTools(),
           conversationHistory,
         );
         plannedCalls = plan.toolCalls ?? [];
 
+        // Record iteration start with planned tools
+        this.executionTracer.startIteration(trace, plannedCalls);
+
         // Apply heuristics only on initial plan
+        const beforeHeuristics = plannedCalls.length;
         plannedCalls = await applyQuestionHeuristics(
-          question,
+          questionForPlanning,
           plannedCalls,
           this.mcp,
           conversationHistory
         );
+
+        // Record heuristic modifications
+        if (plannedCalls.length !== beforeHeuristics) {
+          this.executionTracer.recordHeuristic(trace, {
+            heuristicName: 'questionHeuristics',
+            action: 'inject',
+            reason: 'Applied question pattern matching heuristics',
+            affectedTools: plannedCalls.map(c => c.name),
+          });
+        }
       } else {
         // Follow-up plan (or initial plan for continued conversation)
-        // Filter out error results for planning context to avoid confusing the LLM
-        const successfulResults = allResults.filter(r => r && !(r.result && typeof r.result === 'object' && 'error' in r.result));
+        // Format all results (including errors) for LLM context
+        const formattedResults = this.formatResultsForPlanning(allResults);
 
         const plan = await requestFollowUpPlan(
-          question,
+          questionForPlanning,
           this.config.llm,
           this.mcp.getTools(),
-          successfulResults,
+          formattedResults,
           conversationHistory,
         );
         plannedCalls = plan.toolCalls ?? [];
 
+        // Record iteration start with planned tools
+        this.executionTracer.startIteration(trace, plannedCalls);
+
         // Apply follow-up heuristics
+        const beforeHeuristics = plannedCalls.length;
         plannedCalls = applyFollowUpHeuristics({
-          question,
-          results: successfulResults,
+          question: questionForPlanning,
+          results: formattedResults,
           proposed: plannedCalls,
           mcp: this.mcp,
           maxToolCalls: MAX_TOOL_CALLS_PER_ITERATION
         });
+
+        // Record heuristic modifications
+        if (plannedCalls.length !== beforeHeuristics) {
+          this.executionTracer.recordHeuristic(trace, {
+            heuristicName: 'followUpHeuristics',
+            action: 'modify',
+            reason: 'Applied context-aware follow-up heuristics',
+            affectedTools: plannedCalls.map(c => c.name),
+          });
+        }
       }
 
       // Limit calls
@@ -229,11 +367,22 @@ export class CopilotEngine {
         plannedCalls,
         chatId,
         this.mcp.getTools(),
+        trace
       );
 
       // D. Accumulate
       allResults.push(...results);
       isFirstIteration = false;
+
+      // E. Extract entities from results
+      const extractedEntities = this.entityExtractor.extractFromResults(results);
+      if (extractedEntities.length > 0) {
+        console.log(`[Copilot][${chatId}] Extracted ${extractedEntities.length} entity/entities from iteration ${iteration}`);
+        allExtractedEntities.push(...extractedEntities);
+      }
+
+      // F. Complete iteration trace
+      this.executionTracer.completeIteration(trace);
 
       // If all tools failed, we might want to stop or let the planner try again.
       // For now, we continue and let the planner see the errors in the next iteration (if we passed them).
@@ -272,28 +421,38 @@ export class CopilotEngine {
       this.config.llm,
     );
 
-    // Step 6: Save conversation turn
+    // Step 6: Save conversation turn with extracted entities
     await this.conversationManager.addTurn(
       chatId,
       question,
       allResults,
-      answer.conclusion
+      answer.conclusion,
+      allExtractedEntities
     );
 
-    // Step 7: Generate or update conversation name
-    // Always regenerate name to reflect the evolving conversation
-    try {
-      const conversationName = this.chatNamer.generateName(question, Date.now());
-      await this.conversationManager.setConversationName(chatId, conversationName);
-      console.log(`[Copilot][${chatId}] ${isNewConversation ? 'Generated' : 'Updated'} conversation name: "${conversationName}"`);
-
-    } catch (error) {
-      console.log(`[Copilot][${chatId}] Failed to ${isNewConversation ? 'generate' : 'update'} conversation name: ${error}`);
-      // Continue even if naming fails - conversation is still valid
+    // Step 7: Generate conversation name for new conversations only
+    if (isNewConversation) {
+      try {
+        const conversationName = this.chatNamer.generateName(
+          question,
+          answer.conclusion,
+          Date.now()
+        );
+        await this.conversationManager.setConversationName(chatId, conversationName);
+        console.log(`[Copilot][${chatId}] Generated conversation name: "${conversationName}"`);
+      } catch (error) {
+        console.log(`[Copilot][${chatId}] Failed to generate conversation name: ${error}`);
+        // Continue even if naming fails - conversation is still valid
+      }
     }
 
     console.log(`[Copilot][${chatId}] Conversation stats: ${JSON.stringify(await this.conversationManager.stats())}`);
 
+    // Step 8: Complete execution trace
+    this.executionTracer.completeTrace(trace, {
+      ...answer,
+      chatId,
+    });
 
     return {
       ...answer,

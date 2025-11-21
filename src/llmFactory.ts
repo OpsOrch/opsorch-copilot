@@ -6,7 +6,7 @@ import { NullLlm } from './llms/null.js';
 
 export function createLlmFromEnv(): LlmClient {
     const provider = (process.env.LLM_PROVIDER || 'mock').toLowerCase();
-    if (provider === 'openai') {    
+    if (provider === 'openai') {
         const key = process.env.OPENAI_API_KEY || '';
         if (!key) {
             console.warn('OPENAI_API_KEY missing; using mock LLM. Set LLM_PROVIDER=openai and OPENAI_API_KEY to enable OpenAI.');

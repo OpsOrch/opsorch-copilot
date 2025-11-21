@@ -1,4 +1,6 @@
 import { JsonObject, JsonValue, ToolCall, ToolResult } from '../types.js';
+import { McpClient } from '../mcpClient.js';
+import { ScopeInferenceEngine } from './scopeInferenceEngine.js';
 
 type IncidentContext = {
   id: string;
@@ -13,8 +15,6 @@ type TimeRange = {
   start: string;
   end: string;
 };
-
-import { McpClient } from '../mcpClient.js';
 
 type HeuristicParams = {
   question: string;
@@ -38,6 +38,7 @@ const CONSTANTS = {
     DRILL_DOWN: /root cause|\bwhy\b|trigger|escalat|diagnos|analysis|investigat|happened|debug|trace|timeline|before|after|since|during/,
     COMPARISON: /compar|baseline|before|after|vs|versus|differ/,
     TEMPORAL: /since then|after that|following|preceding|around that time/,
+    OBSERVABILITY: /\b(logs?|metrics?|telemetry|data|details?|numbers?|show\s+me|give\s+me)\b/i,
   },
 };
 
@@ -105,6 +106,15 @@ export function applyFollowUpHeuristics({ question, results, proposed, mcp, maxT
   // 7. Handle Metrics Follow-up
   if (hasTool(CONSTANTS.TOOLS.METRICS)) {
     handleMetricsFollowUp(window, scope, context, enqueue);
+  }
+
+  // 8. Apply scope inference to unscoped queries
+  const scopeEngine = new ScopeInferenceEngine();
+  const inference = scopeEngine.inferScope(question, results);
+
+  if (inference) {
+    console.log(`[ScopeInference] ${inference.reason} (confidence: ${inference.confidence})`);
+    deduped = scopeEngine.applyScope(deduped, inference);
   }
 
   return clamp(deduped, maxToolCalls);
@@ -236,11 +246,25 @@ function clamp(calls: ToolCall[], maxToolCalls?: number): ToolCall[] {
 
 function shouldDrillIntoIncident(question: string): boolean {
   const normalized = question.toLowerCase();
-  return (
-    CONSTANTS.PATTERNS.DRILL_DOWN.test(normalized) ||
-    CONSTANTS.PATTERNS.COMPARISON.test(normalized) ||
-    CONSTANTS.PATTERNS.TEMPORAL.test(normalized)
-  );
+  const drillDown = CONSTANTS.PATTERNS.DRILL_DOWN.test(normalized);
+  const comparison = CONSTANTS.PATTERNS.COMPARISON.test(normalized);
+  const temporal = CONSTANTS.PATTERNS.TEMPORAL.test(normalized);
+  const observability = CONSTANTS.PATTERNS.OBSERVABILITY.test(normalized);
+
+  const result = drillDown || comparison || temporal || observability;
+
+  if (result) {
+    const reasons: string[] = [];
+    if (drillDown) reasons.push('drill-down');
+    if (comparison) reasons.push('comparison');
+    if (temporal) reasons.push('temporal');
+    if (observability) reasons.push('observability');
+    console.log(`[FollowUpHeuristics] Drill-down enabled: ${reasons.join(', ')} (question: "${question}")`);
+  } else {
+    console.log(`[FollowUpHeuristics] Drill-down disabled, filtering to incident-only calls (question: "${question}")`);
+  }
+
+  return result;
 }
 
 function stableStringify(value: unknown): string {

@@ -375,13 +375,14 @@ test('skips tool calls missing MCP-required fields', async () => {
   assert.ok(answer.conclusion.includes('No tool results'), 'answer should reflect missing tool outputs');
 });
 
-test('injects incident query when planner omits it for severity questions', async () => {
+test('defers to LLM plan even when heuristics might inject', async () => {
   const llm: LlmClient = {
     async chat(_messages: LlmMessage[] = [], tools: Tool[] = [], _opts?: { chatId?: string }) {
       if (tools.length) {
-        return { content: 'plan', toolCalls: [{ name: 'health', arguments: {} }], chatId: 'conv-inject-plan' };
+        // LLM provides a valid plan (health check)
+        return { content: 'plan', toolCalls: [{ name: 'health', arguments: {} }], chatId: 'conv-defer-plan' };
       }
-      return { content: JSON.stringify({ conclusion: 'done' }), toolCalls: [], chatId: 'conv-inject-plan' };
+      return { content: JSON.stringify({ conclusion: 'done' }), toolCalls: [], chatId: 'conv-defer-plan' };
     },
   };
 
@@ -391,9 +392,6 @@ test('injects incident query when planner omits it for severity questions', asyn
       return [{ name: 'health' } as Tool, { name: 'query-incidents' } as Tool];
     },
     async callTool(call) {
-      if (call.name === 'health') {
-        throw new Error('health tool should never be executed');
-      }
       calls.push(call);
       return { name: call.name, result: { ok: true } };
     },
@@ -402,9 +400,10 @@ test('injects incident query when planner omits it for severity questions', asyn
   const engine = makeEngine(llm, mcp);
   await engine.answer('Summarize the latest SEV1 incident');
 
+  // With conservative heuristics, we trust the LLM's plan
+  // Even though question mentions SEV1, heuristics defer to LLM choice
   assert.equal(calls.length, 1);
-  assert.equal(calls[0]?.name, 'query-incidents');
-  assert.deepEqual(calls[0]?.arguments, { limit: 1, severities: ['sev1'] });
+  assert.equal(calls[0]?.name, 'health', 'Should execute LLM\'s chosen tool');
 });
 
 test('adds default logs and metrics calls when user explicitly asks for them', async () => {
