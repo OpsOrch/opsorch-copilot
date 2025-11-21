@@ -53,7 +53,9 @@ export class InMemoryConversationStore implements ConversationStore {
     }
 
     async list(): Promise<string[]> {
-        return Array.from(this.conversations.keys());
+        // Return IDs sorted by last access time (most recent first)
+        const sorted = Array.from(this.conversations.values()).sort((a, b) => b.lastAccessedAt - a.lastAccessedAt);
+        return sorted.map(c => c.chatId);
     }
 
     async clear(): Promise<void> {

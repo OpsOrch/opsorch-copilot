@@ -76,9 +76,10 @@ export class ConversationManager {
         let conversation = await this.store.get(chatId);
 
         if (!conversation) {
-            // Create new conversation
+            // Create new conversation with temporary name (will be updated by ChatNamer)
             conversation = {
                 chatId,
+                name: 'New Conversation',
                 turns: [],
                 createdAt: Date.now(),
                 lastAccessedAt: Date.now(),
@@ -155,6 +156,14 @@ export class ConversationManager {
     }
 
     /**
+     * List all conversation IDs.
+     */
+    async list(): Promise<string[]> {
+        return await this.store.list();
+    }
+
+
+    /**
      * Clear expired conversations.
      */
     async clearExpired(): Promise<void> {
@@ -195,6 +204,22 @@ export class ConversationManager {
             activeConversations: chatIds.length,
             totalTurns,
         };
+    }
+
+    /**
+     * Set the name for a conversation.
+     */
+    async setConversationName(chatId: string, name: string): Promise<void> {
+        const conversation = await this.store.get(chatId);
+        
+        if (!conversation) {
+            console.warn(`[ConversationManager] Cannot set name for non-existent conversation: ${chatId}`);
+            return;
+        }
+
+        conversation.name = name;
+        conversation.lastAccessedAt = Date.now();
+        await this.store.set(chatId, conversation);
     }
 
     /**

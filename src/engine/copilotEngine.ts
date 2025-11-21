@@ -18,6 +18,7 @@ import { runToolCalls } from './toolRunner.js';
 
 import { ResultCache } from './resultCache.js';
 import { ConversationManager } from './conversationManager.js';
+import { ChatNamer } from './chatNamer.js';
 
 const DEFAULT_MAX_ITERATIONS = 3;
 const MAX_TOOL_CALLS_PER_ITERATION = 3;
@@ -45,12 +46,14 @@ export class CopilotEngine {
     [] as ReturnType<McpClient['listTools']> extends Promise<infer T> ? T : never;
   private readonly resultCache: ResultCache;
   private readonly conversationManager: ConversationManager;
+  private readonly chatNamer: ChatNamer;
   private readonly maxIterations: number;
 
   constructor(private readonly config: RuntimeConfig) {
     this.mcp = new McpClient(config.mcpUrl);
     this.resultCache = new ResultCache();
     this.conversationManager = new ConversationManager();
+    this.chatNamer = new ChatNamer();
     this.maxIterations = config.maxIterations ?? DEFAULT_MAX_ITERATIONS;
   }
 
@@ -131,6 +134,13 @@ export class CopilotEngine {
     }
 
     return results;
+  }
+
+  /**
+   * Expose conversation manager for API access to chat history.
+   */
+  getConversationManager(): ConversationManager {
+    return this.conversationManager;
   }
 
   /**
@@ -282,6 +292,17 @@ export class CopilotEngine {
       allResults,
       answer.conclusion
     );
+
+    // Step 7: Generate or update conversation name
+    // Always regenerate name to reflect the evolving conversation
+    try {
+      const conversationName = this.chatNamer.generateName(question, Date.now());
+      await this.conversationManager.setConversationName(chatId, conversationName);
+      log(`${isNewConversation ? 'Generated' : 'Updated'} conversation name: "${conversationName}"`);
+    } catch (error) {
+      log(`Failed to ${isNewConversation ? 'generate' : 'update'} conversation name: ${error}`);
+      // Continue even if naming fails - conversation is still valid
+    }
 
     log(`Conversation stats: ${JSON.stringify(await this.conversationManager.stats())}`);
 

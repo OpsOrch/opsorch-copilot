@@ -2,13 +2,15 @@ import express from 'express';
 import { CopilotEngine } from './engine/copilotEngine.js';
 import { createLlmFromEnv } from './llmFactory.js';
 
-function createApp() {
+function createApp(engineOverride?: CopilotEngine) {
   const app = express();
   app.use(express.json());
 
-  const mcpUrl = process.env.MCP_URL || 'http://localhost:7070/mcp';
-  const llm = createLlmFromEnv();
-  const engine = new CopilotEngine({ mcpUrl, llm });
+  const engine = engineOverride || (() => {
+    const mcpUrl = process.env.MCP_URL || 'http://localhost:7070/mcp';
+    const llm = createLlmFromEnv();
+    return new CopilotEngine({ mcpUrl, llm });
+  })();
 
   app.get('/health', (_req, res) => {
     res.json({ status: 'ok' });
@@ -25,9 +27,69 @@ function createApp() {
 
     try {
       const answer = await engine.answer(message, { chatId });
-      res.json({ chatId: answer.chatId, answer });
+      
+      // Retrieve conversation to get the name
+      const conversationManager = engine.getConversationManager();
+      const conversation = await conversationManager.getConversation(answer.chatId);
+      const name = conversation?.name;
+      
+      res.json({ chatId: answer.chatId, name, answer });
     } catch (err) {
       console.error('chat error', err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get('/chats', async (_req, res) => {
+    try {
+      const conversationManager = engine.getConversationManager();
+      const chatIds = await conversationManager.list();
+
+      // Build metadata for each conversation
+      const conversations = [];
+      for (const chatId of chatIds) {
+        const conversation = await conversationManager.getConversation(chatId);
+        if (conversation) {
+          conversations.push({
+            chatId: conversation.chatId,
+            name: conversation.name,
+            createdAt: conversation.createdAt,
+            lastAccessedAt: conversation.lastAccessedAt,
+            turnCount: conversation.turns.length,
+          });
+        }
+      }
+
+      // Sort by most recent first
+      conversations.sort((a, b) => b.lastAccessedAt - a.lastAccessedAt);
+
+      res.json({ conversations });
+    } catch (err) {
+      console.error('list chats error', err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
+  app.get('/chats/:id', async (req, res) => {
+    const chatId = req.params.id;
+
+    if (!chatId) {
+      res.status(400).json({ error: 'chatId is required' });
+      return;
+    }
+
+    try {
+      const conversationManager = engine.getConversationManager();
+      const conversation = await conversationManager.getConversation(chatId);
+
+      if (!conversation) {
+        res.status(404).json({ error: 'Conversation not found or expired' });
+        return;
+      }
+
+      res.json({ conversation });
+    } catch (err) {
+      console.error('get chat error', err);
       res.status(500).json({ error: (err as Error).message });
     }
   });

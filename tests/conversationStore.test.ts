@@ -9,6 +9,7 @@ test('InMemoryConversationStore - basic CRUD operations', async () => {
 
     const conversation: Conversation = {
         chatId: 'test-123',
+        name: 'Test Conversation',
         turns: [
             {
                 userMessage: 'Hello',
@@ -50,6 +51,7 @@ test('InMemoryConversationStore - LRU eviction', async () => {
 
     const createConversation = (id: string): Conversation => ({
         chatId: id,
+        name: `Conversation ${id}`,
         turns: [],
         createdAt: Date.now(),
         lastAccessedAt: Date.now(),
@@ -83,6 +85,7 @@ test('InMemoryConversationStore - LRU access order', async () => {
 
     const createConversation = (id: string): Conversation => ({
         chatId: id,
+        name: `Conversation ${id}`,
         turns: [],
         createdAt: Date.now(),
         lastAccessedAt: Date.now(),
@@ -112,6 +115,7 @@ test('InMemoryConversationStore - update existing conversation', async () => {
 
     const conversation: Conversation = {
         chatId: 'test-123',
+        name: 'Test Conversation',
         turns: [
             {
                 userMessage: 'Hello',

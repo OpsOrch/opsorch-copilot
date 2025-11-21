@@ -85,6 +85,7 @@ export type ConversationTurn = {
 
 export type Conversation = {
   chatId: string;
+  name: string;
   turns: ConversationTurn[];
   createdAt: number;
   lastAccessedAt: number;
