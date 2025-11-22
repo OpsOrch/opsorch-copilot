@@ -128,7 +128,21 @@ function stripNullish(value: unknown): unknown {
     return cleaned.length ? cleaned : undefined;
   }
   if (typeof value === 'object') {
-    const entries = Object.entries(value as Record<string, unknown>)
+    const obj = value as Record<string, unknown>;
+
+    // Detect null-like objects from LLM (e.g., {type: "null"})
+    // Pattern 1: {type: "null"} - LLM sometimes returns this instead of literal null
+    if (Object.keys(obj).length === 1 && obj.type === 'null') {
+      console.log('[ToolRunner] Normalizing null-like object: {type: "null"}');
+      return undefined;
+    }
+
+    // Pattern 2: Empty objects {} - treat as nullish
+    if (Object.keys(obj).length === 0) {
+      return undefined;
+    }
+
+    const entries = Object.entries(obj)
       .map(([key, val]) => [key, stripNullish(val)] as const)
       .filter(([, val]) => val !== undefined);
     if (!entries.length) {

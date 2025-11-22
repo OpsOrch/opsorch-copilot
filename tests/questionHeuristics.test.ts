@@ -33,7 +33,7 @@ test('applyQuestionHeuristics returns empty when no heuristics match', async () 
 test('applyQuestionHeuristics keeps existing calls', async () => {
     const question = 'generic question';
     const calls: ToolCall[] = [{ name: 'existing-tool', arguments: {} }];
-    const mcp = mockMcp([]);
+    const mcp = mockMcp(['existing-tool']); // Add the tool to mockMcp
 
     const result = await applyQuestionHeuristics(question, calls, mcp);
     assert.equal(result.length, 1);
@@ -263,3 +263,133 @@ test('applyQuestionHeuristics falls back to regex if service not in known list',
     // Should still extract "unknown-service" because of the "service" keyword pattern
     assert.deepEqual((logCall?.arguments as any)?.scope, { service: 'unknown-service' });
 });
+
+// NEW TESTS FOR ENHANCEMENTS
+
+test('applyQuestionHeuristics detects direct latency request', async () => {
+    const question = "what's the latency for this service";
+    const calls: ToolCall[] = [];
+    const mcp = mockMcp(['query-metrics']);
+
+    const result = await applyQuestionHeuristics(question, calls, mcp);
+    assert.ok(result.some(c => c.name === 'query-metrics'), 'Should inject metrics query');
+    const metricCall = result.find(c => c.name === 'query-metrics');
+    assert.ok((metricCall?.arguments as any)?.expression, 'Should have expression');
+});
+
+test('applyQuestionHeuristics filters invalid LLM calls', async () => {
+    const question = 'show incidents';
+    // LLM provides a call with invalid arguments (missing required fields)
+    const calls: ToolCall[] = [
+        { name: 'query-incidents', arguments: {} } // Missing required fields
+    ];
+    const tools = [
+        {
+            name: 'query-incidents',
+            inputSchema: {
+                type: 'object',
+                required: ['query'],
+                properties: { query: { type: 'string' } }
+            }
+        }
+    ];
+
+    const mcp = {
+        hasTool: (name: string) => name === 'query-incidents',
+        listTools: async () => tools,
+        getTools: () => tools,
+        callTool: async () => ({ result: { services: [] } })
+    } as unknown as McpClient;
+
+    const result = await applyQuestionHeuristics(question, calls, mcp);
+    // Should filter out invalid call and inject heuristic
+    assert.ok(result.length > 0, 'Should have injected heuristic call');
+});
+
+test('applyQuestionHeuristics  extracts service from previous results', async () => {
+    const question = "what's the latency";
+    const calls: ToolCall[] = [];
+    const mcp = mockMcp(['query-metrics']);
+
+    const previousResults = [
+        {
+            name: 'query-incidents',
+            result: {
+                incidents: [
+                    { id: 'inc-001', service: 'svc-search', title: 'Search down' }
+                ]
+            },
+            arguments: {}
+        }
+    ];
+
+    const result = await applyQuestionHeuristics(question, calls, mcp, [], previousResults);
+    const metricCall = result.find(c => c.name === 'query-metrics');
+    assert.deepEqual((metricCall?.arguments as any)?.scope, { service: 'svc-search' },
+        'Should extract service from previous results');
+});
+
+// NEW TESTS FOR INTENT-BASED HEURISTICS
+
+test('applyQuestionHeuristics handles "metrics and logs" noun phrase', async () => {
+    const question = 'metrics and logs';
+    const calls: ToolCall[] = [];
+    const mcp = mockMcp(['query-logs', 'query-metrics']);
+
+    const result = await applyQuestionHeuristics(question, calls, mcp);
+    assert.ok(result.some(c => c.name === 'query-logs'), 'Should inject query-logs');
+    assert.ok(result.some(c => c.name === 'query-metrics'), 'Should inject query-metrics');
+});
+
+test('applyQuestionHeuristics handles abbreviated "logs?"', async () => {
+    const question = 'logs?';
+    const calls: ToolCall[] = [];
+    const mcp = mockMcp(['query-logs']);
+
+    const result = await applyQuestionHeuristics(question, calls, mcp);
+    assert.ok(result.some(c => c.name === 'query-logs'), 'Should inject query-logs for "logs?"');
+});
+
+test('applyQuestionHeuristics handles "check latency"', async () => {
+    const question = 'check latency';
+    const calls: ToolCall[] = [];
+    const mcp = mockMcp(['query-metrics']);
+
+    const result = await applyQuestionHeuristics(question, calls, mcp);
+    const metricCall = result.find(c => c.name === 'query-metrics');
+    assert.ok(metricCall, 'Should inject query-metrics');
+    assert.ok((metricCall?.arguments as any)?.expression?.includes('latency'), 'Should have latency expression');
+});
+
+test('applyQuestionHeuristics uses service context from previous results', async () => {
+    const question = 'metrics';
+    const calls: ToolCall[] = [];
+    const mcp = mockMcp(['query-metrics']);
+
+    const previousResults = [
+        {
+            name: 'get-incident',
+            result: {
+                id: 'inc-012',
+                service: 'svc-realtime',
+                status: 'open'
+            },
+            arguments: { id: 'inc-012' }
+        }
+    ];
+
+    const result = await applyQuestionHeuristics(question, calls, mcp, [], previousResults);
+    const metricCall = result.find(c => c.name === 'query-metrics');
+    assert.deepEqual((metricCall?.arguments as any)?.scope, { service: 'svc-realtime' },
+        'Should use service from previous results');
+});
+
+test('applyQuestionHeuristics skips intent injection if confidence too low', async () => {
+    const question = 'what is the weather today';  // Unrelated to observability
+    const calls: ToolCall[] = [];
+    const mcp = mockMcp(['query-logs', 'query-metrics']);
+
+    const result = await applyQuestionHeuristics(question, calls, mcp);
+    assert.equal(result.length, 0, 'Should not inject anything for low-confidence questions');
+});
+

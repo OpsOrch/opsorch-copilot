@@ -17,7 +17,7 @@ import { Entity, ConversationContext } from './entityExtractor.js';
 export const DEFAULT_CONVERSATION_CONFIG: ConversationConfig = {
     maxConversations: 100,
     maxTurnsPerConversation: 20,
-    conversationTTLMs: 30 * 60 * 1000, // 30 minutes
+    conversationTTLMs: 30 * 24 * 60 * 60 * 1000, // 30 days
 };
 
 const MAX_ENTITIES_PER_TYPE = 100; // LRU limit per entity type

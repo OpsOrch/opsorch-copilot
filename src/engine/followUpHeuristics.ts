@@ -81,8 +81,15 @@ export function applyFollowUpHeuristics({ question, results, proposed, mcp, maxT
   // 4. Check if we should drill down further
   const drillDown = shouldDrillIntoIncident(question);
   if (!drillDown) {
-    // If not drilling down, only keep incident-related calls
-    deduped = deduped.filter((call) => call.name.includes('incident'));
+    // Check if question directly requests observability data
+    const directObservability = /^(show|get|what|give|tell).*(log|metric|latency|cpu|memory)/i.test(question);
+
+    if (!directObservability) {
+      // If not drilling down, only keep incident-related calls
+      deduped = deduped.filter((call) => call.name.includes('incident'));
+    }
+    // else: Keep all calls including logs/metrics for direct observability requests
+
     return clamp(deduped, maxToolCalls);
   }
 

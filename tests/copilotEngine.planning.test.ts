@@ -331,12 +331,13 @@ test('caps planner to 3 tool calls per iteration even if LLM proposes more', asy
   );
 });
 
-test('skips tool calls missing MCP-required fields', async () => {
+test('validates invalid LLM calls and provides heuristic fallback', async () => {
   const llm: LlmClient = {
     async chat(_messages: LlmMessage[] = [], _tools: Tool[] = [], _opts?: { chatId?: string }) {
       return {
         content: 'plan',
         toolCalls: [
+          // LLM provides invalid call (missing required 'expression' and 'step')
           { name: 'query-metrics', arguments: { start: '2024-01-01T00:00:00Z', end: '2024-01-01T01:00:00Z' } },
         ],
         chatId: 'conv-missing-fields',
@@ -365,14 +366,23 @@ test('skips tool calls missing MCP-required fields', async () => {
     },
     async callTool(call) {
       calls.push(call);
-      return { name: call.name, result: { ok: true } };
+      return { name: call.name, result: { metrics: [] } };
     },
   };
 
   const engine = makeEngine(llm, mcp);
   const answer = await engine.answer('check metrics');
-  assert.equal(calls.length, 0, 'call should be skipped because required fields are missing');
-  assert.ok(answer.conclusion.includes('No tool results'), 'answer should reflect missing tool outputs');
+
+  // New behavior: Invalid LLM call is caught, but heuristics inject a valid fallback
+  assert.equal(calls.length, 1, 'heuristics should inject valid query-metrics call after filtering invalid LLM call');
+  assert.equal(calls[0].name, 'query-metrics');
+
+  // The heuristic-injected call should have all required fields
+  const args = calls[0].arguments as any;
+  assert.ok(args.expression, 'should have expression field');
+  assert.ok(typeof args.step === 'number', 'should have step field');
+  assert.ok(args.start, 'should have start field');
+  assert.ok(args.end, 'should have end field');
 });
 
 test('defers to LLM plan even when heuristics might inject', async () => {
@@ -422,6 +432,7 @@ test('adds default logs and metrics calls when user explicitly asks for them', a
       return [{ name: 'query-logs' } as Tool, { name: 'query-metrics' } as Tool];
     },
     async callTool(call) {
+      console.log('Test callTool:', call.name);
       calls.push(call);
       return { name: call.name, result: { ok: true } };
     },
@@ -430,6 +441,8 @@ test('adds default logs and metrics calls when user explicitly asks for them', a
   const engine = makeEngine(llm, mcp);
   await engine.answer('Tell me more about 504s in logs and metrics');
 
+  console.log('Calls length:', calls.length);
+  console.log('Calls:', calls.map(c => c.name));
   assert.equal(calls.length, 2);
   assert.equal(calls[0]?.name, 'query-logs');
   assert.ok(((calls[0]?.arguments as any).query as string).includes('504'));

@@ -282,8 +282,10 @@ export class CopilotEngine {
       const iterationStartTime = Date.now();
 
       // A. Plan
-      if (isFirstIteration && isNewConversation) {
-        // Initial plan for new conversation
+      if (isFirstIteration) {
+        // Initial plan (whether new or continued conversation)
+        // We treat the start of any turn as an "initial plan" for that specific question,
+        // utilizing conversation history for context.
         const plan = await requestInitialPlan(
           questionForPlanning,
           this.config.llm,
@@ -301,7 +303,8 @@ export class CopilotEngine {
           questionForPlanning,
           plannedCalls,
           this.mcp,
-          conversationHistory
+          conversationHistory,
+          allResults  // Pass accumulated results for entity extraction
         );
 
         // Record heuristic modifications

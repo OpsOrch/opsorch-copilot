@@ -1,6 +1,9 @@
-import { ToolCall, LlmMessage, Tool } from '../types.js';
+import { ToolCall, LlmMessage, Tool, ToolResult } from '../types.js';
 import { McpClient } from '../mcpClient.js';
 import { getKnownServices } from './serviceDiscovery.js';
+import { validateToolCall } from './toolsSchema.js';
+import { classifyIntent, extractConversationContext } from './intentClassifier.js';
+import { buildLogQuery, buildMetricsExpression, getDefaultTimeWindow } from './queryBuilder.js';
 
 type Logger = (message: string) => void;
 
@@ -15,6 +18,8 @@ const PATTERNS = {
   METRICS: {
     ANY: /metric|stat|latency|throughput|cpu|memory|usage|rate/i,
   },
+  LATENCY: /latency|p95|p99|response time|slow/i,
+  OBSERVABILITY_DIRECT: /^(show|get|fetch|what|give|tell).*(logs?|metrics?|data|latency|cpu|memory)/i,
   TIME_WINDOW: /(last|past|previous)\s+(\d+)\s+(minute|hour|day)s?/i,
 };
 
@@ -28,7 +33,8 @@ export async function applyQuestionHeuristics(
   question: string,
   calls: ToolCall[],
   mcp: McpClient,
-  history: LlmMessage[] = []
+  history: LlmMessage[] = [],
+  previousResults?: ToolResult[]
 ): Promise<ToolCall[]> {
   let augmented = [...calls];
   const normalized = question.toLowerCase();
@@ -36,8 +42,8 @@ export async function applyQuestionHeuristics(
 
   const hasTool = (name: string) => mcp.hasTool(name);
 
-  // Extract context from conversation history
-  const historyContext = extractContextFromHistory(history);
+  // Extract context from conversation history and previous tool results
+  const historyContext = extractContextFromHistory(history, previousResults);
 
   // Fetch known services for fuzzy matching
   // We need the tools list for getKnownServices, so we fetch it from mcp
@@ -46,7 +52,44 @@ export async function applyQuestionHeuristics(
 
   // Only apply heuristics if LLM didn't provide any meaningful plan
   // Empty plan (length = 0) should still allow heuristics to inject
-  const hasValidLlmPlan = augmented.length > 0 && augmented.some(call => !hasPlaceholders(call.arguments));
+
+  // First, validate the LLM plan to catch validation errors
+  const validatedCalls: Array<{ call: ToolCall; valid: boolean }> = [];
+  for (const call of augmented) {
+    const tool = tools.find(t => t.name === call.name);
+    if (!tool) {
+      // Tool not found - consider it invalid
+      validatedCalls.push({ call, valid: false });
+      continue;
+    }
+
+    // If tool has no schema, consider it valid (can't validate)
+    if (!tool.inputSchema) {
+      validatedCalls.push({ call, valid: true });
+      continue;
+    }
+
+    const validation = validateToolCall(call, tool);
+    validatedCalls.push({ call, valid: validation.valid });
+
+    if (!validation.valid) {
+      console.log(
+        `[QuestionHeuristics] LLM call ${call.name} has validation errors:\n` +
+        validation.errors.map(e => `  - ${e}`).join('\n')
+      );
+    }
+  }
+
+  const hasAnyInvalid = validatedCalls.some(v => !v.valid);
+  const hasValidLlmPlan = augmented.length > 0 &&
+    !hasAnyInvalid &&
+    !augmented.some(call => hasPlaceholders(call.arguments));
+
+  if (hasAnyInvalid) {
+    console.log(`[QuestionHeuristics] LLM plan has validation errors, filtering invalid calls and applying heuristics`);
+    // Filter out invalid calls, keep valid ones
+    augmented = validatedCalls.filter(v => v.valid).map(v => v.call);
+  }
 
   if (hasValidLlmPlan) {
     console.log(`[QuestionHeuristics] Deferring to LLM plan (${augmented.length} call(s))`);
@@ -113,6 +156,91 @@ export async function applyQuestionHeuristics(
     console.log(`[QuestionHeuristics] LLM plan contains only placeholders, applying heuristics`);
   }
 
+  // NEW: Intent-based injection with confidence scoring
+  const conversationContext = extractConversationContext(history, previousResults);
+  const intent = classifyIntent(question, conversationContext);
+
+  console.log(`[QuestionHeuristics] Intent: ${intent.intent} (confidence: ${intent.confidence.toFixed(2)}) - ${intent.reasoning}`);
+
+  // Only proceed with intent-based injection if confidence threshold is met
+  if (intent.confidence >= 0.5 && intent.suggestedTools.length > 0) {
+    const window = parseTimeWindow(question) || getDefaultTimeWindow(conversationContext);
+    // Try to extract service from question text first, fallback to context
+    const serviceFromQuestion = extractService(question, knownServices);
+    const service = serviceFromQuestion || conversationContext.lastService;
+
+    for (const toolName of intent.suggestedTools) {
+      // Skip if we already have this tool in the plan
+      if (augmented.some(call => call.name === toolName)) {
+        console.log(`[QuestionHeuristics] Skipping ${toolName} - already in plan`);
+        continue;
+      }
+
+      if (!hasTool(toolName)) {
+        console.log(`[QuestionHeuristics] Skipping ${toolName} - not available`);
+        continue;
+      }
+
+      // Build tool call based on type
+      if (toolName === 'query-logs') {
+        const query = buildLogQuery(question, conversationContext);
+        inserted.push({
+          name: toolName,
+          arguments: {
+            query,
+            start: window.start || new Date(Date.now() - 3600000).toISOString(),
+            end: window.end || new Date().toISOString(),
+            ...(service && { scope: { service } }),
+            limit: 100,
+            metadata: {},
+            providers: null,
+          }
+        });
+        console.log(`[QuestionHeuristics] Intent-based: Injected query-logs with query="${query}"`);
+      } else if (toolName === 'query-metrics') {
+        const expression = buildMetricsExpression(question, conversationContext);
+        inserted.push({
+          name: toolName,
+          arguments: {
+            expression,
+            start: window.start || new Date(Date.now() - 3600000).toISOString(),
+            end: window.end || new Date().toISOString(),
+            step: 60,
+            ...(service && { scope: { service } }),
+            metadata: {},
+          }
+        });
+        console.log(`[QuestionHeuristics] Intent-based: Injected query-metrics with expression="${expression}"`);
+      } else if (toolName === 'query-incidents') {
+        const args = getIncidentArgs(question);
+        if (service) {
+          args.scope = { service };
+        }
+        inserted.push({
+          name: toolName,
+          arguments: args
+        });
+        console.log(`[QuestionHeuristics] Intent-based: Injected query-incidents`);
+      } else {
+        inserted.push({
+          name: toolName,
+          arguments: {}
+        });
+        console.log(`[QuestionHeuristics] Intent-based: Injected ${toolName}`);
+      }
+    }
+  }
+
+  // If we injected tools via intent, we can skip the old heuristics
+  if (inserted.length > 0) {
+    console.log(`[QuestionHeuristics] Intent-based injection completed (${inserted.length} tool(s)), skipping legacy heuristics`);
+    return [...augmented, ...inserted];
+  }
+
+
+  // FALLBACK: Legacy heuristics below (kept for compatibility)
+  console.log(`[QuestionHeuristics] Applying legacy pattern-based heuristics`);
+
   // 1. Incident Heuristics
   const wantsIncident =
     PATTERNS.INCIDENT.test(normalized) ||
@@ -172,12 +300,36 @@ export async function applyQuestionHeuristics(
     return prioritizeAndMerge(inserted, augmented, normalized);
   }
 
+  // Last resort: check for direct observability requests that might not match above patterns
+  const wantsLatency = PATTERNS.LATENCY.test(normalized) || PATTERNS.OBSERVABILITY_DIRECT.test(normalized);
+
+  if (wantsLatency && hasTool(TOOLS.METRICS)) {
+    console.log(`[QuestionHeuristics] Injecting metrics query for latency/observability request (fallback)`);
+    const args = getMetricArgs(normalized, undefined, window, service);
+    inserted.push({ name: TOOLS.METRICS, arguments: args });
+    return prioritizeAndMerge(inserted, augmented, normalized);
+  }
+
   // LLM didn't provide a plan and heuristics didn't match - return empty to trigger fallback
   console.log(`[QuestionHeuristics] No heuristic matches, allowing fallback to trigger`);
   return augmented;
 }
 
-function extractContextFromHistory(history: LlmMessage[]): { service?: string } {
+function extractContextFromHistory(
+  history: LlmMessage[],
+  allPreviousResults?: ToolResult[]
+): {
+  service?: string;
+  incident?: string;
+  timeRange?: { start: string; end: string };
+} {
+  const context: {
+    service?: string;
+    incident?: string;
+    timeRange?: { start: string; end: string };
+  } = {};
+
+  // 1. Extract from message text
   // Look through recent messages to find service mentions
   // This provides context for follow-up questions like "show me logs" after discussing a specific service
   const recentMessages = history.slice(-10).reverse(); // Last 10 messages, most recent first
@@ -187,34 +339,101 @@ function extractContextFromHistory(history: LlmMessage[]): { service?: string } 
 
     // Pattern 1: "service: <name>" or "service=<name>"
     const serviceColonMatch = text.match(/service[:\s=]+([a-z0-9-_]+)/i);
-    if (serviceColonMatch && serviceColonMatch[1]) {
-      return { service: serviceColonMatch[1] };
+    if (serviceColonMatch && serviceColonMatch[1] && !context.service) {
+      context.service = serviceColonMatch[1];
     }
 
     // Pattern 2: "in <service-name> service" or "for <service-name>"
     const servicePatternMatch = text.match(/(?:in|for)\s+([a-z0-9-_]+)(?:\s+service)?/i);
-    if (servicePatternMatch && servicePatternMatch[1]) {
+    if (servicePatternMatch && servicePatternMatch[1] && !context.service) {
       const candidate = servicePatternMatch[1];
       // Filter out common prepositions/words that aren't services
       const stopWords = ['the', 'a', 'an', 'this', 'that', 'which', 'last', 'past'];
       if (!stopWords.includes(candidate.toLowerCase()) && candidate.includes('-')) {
-        return { service: candidate };
+        context.service = candidate;
       }
     }
 
     // Pattern 3: Look for kebab-case identifiers that might be service names
     // (common pattern: payment-service, user-api, checkout-service)
-    const kebabMatch = text.match(/\b([a-z]+-[a-z0-9-]+)\b/i);
-    if (kebabMatch && kebabMatch[1]) {
-      const candidate = kebabMatch[1].toLowerCase();
-      // Only consider if it looks like a service name (contains "service", "api", etc., or multiple dashes)
-      if (candidate.includes('service') || candidate.includes('api') || candidate.split('-').length >= 2) {
-        return { service: candidate };
+    if (!context.service) {
+      const kebabMatch = text.match(/\b([a-z]+-[a-z0-9-]+)\b/i);
+      if (kebabMatch && kebabMatch[1]) {
+        const candidate = kebabMatch[1].toLowerCase();
+        // Only consider if it looks like a service name (contains "service", "api", etc., or multiple dashes)
+        if (candidate.includes('service') || candidate.includes('api') || candidate.split('-').length >= 2) {
+          context.service = candidate;
+        }
       }
     }
   }
 
-  return {};
+  // 2. Extract from tool results (NEW)
+  if (allPreviousResults) {
+    for (const result of allPreviousResults) {
+      const payload = result.result;
+
+      if (!payload || typeof payload !== 'object') continue;
+
+      // Extract service from various possible locations
+      if (!context.service) {
+        // From scope.service
+        const scope = (payload as any).scope;
+        if (scope?.service && typeof scope.service === 'string') {
+          context.service = scope.service;
+          continue; // Found service, move to next result
+        }
+
+        // From top-level service field
+        if ((payload as any).service && typeof (payload as any).service === 'string') {
+          context.service = (payload as any).service;
+          continue;
+        }
+
+        // From nested items (incidents might have service field)
+        if (Array.isArray((payload as any).incidents)) {
+          const firstIncident = (payload as any).incidents[0];
+          if (firstIncident?.service && typeof firstIncident.service === 'string') {
+            context.service = firstIncident.service;
+            continue;
+          }
+        }
+      }
+
+      // Extract incident ID
+      if (!context.incident) {
+        if ((payload as any).id && typeof (payload as any).id === 'string') {
+          const id = (payload as any).id;
+          if (id.startsWith('inc-') || id.startsWith('INC-')) {
+            context.incident = id;
+          }
+        }
+
+        // Check in array of incidents
+        if (Array.isArray((payload as any).incidents) && (payload as any).incidents.length > 0) {
+          const firstIncident = (payload as any).incidents[0];
+          if (firstIncident?.id && typeof firstIncident.id === 'string') {
+            context.incident = firstIncident.id;
+          }
+        }
+      }
+
+      // Extract time ranges
+      if (!context.timeRange) {
+        const start = (payload as any).start || (payload as any).startTime || (payload as any).createdAt;
+        const end = (payload as any).end || (payload as any).endTime || (payload as any).updatedAt;
+
+        if (start && end && typeof start === 'string' && typeof end === 'string') {
+          // Validate they look like ISO timestamps
+          if (/\d{4}-\d{2}-\d{2}T/.test(start) && /\d{4}-\d{2}-\d{2}T/.test(end)) {
+            context.timeRange = { start, end };
+          }
+        }
+      }
+    }
+  }
+
+  return context;
 }
 
 function parseTimeWindow(question: string): { start?: string; end?: string } | undefined {
