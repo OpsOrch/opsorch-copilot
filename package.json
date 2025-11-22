@@ -12,10 +12,12 @@
     "start": "node --loader ts-node/esm src/server.ts"
   },
   "dependencies": {
+    "better-sqlite3": "^12.4.6",
     "express": "^5.1.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/express": "^5.0.5",
     "@types/node": "^22.9.4",
     "supertest": "^7.0.0",

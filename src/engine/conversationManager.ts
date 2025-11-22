@@ -11,7 +11,7 @@ import {
     ToolResult,
 } from '../types.js';
 import { ConversationStore } from '../conversationStore.js';
-import { InMemoryConversationStore } from '../stores/inMemoryConversationStore.js';
+import { createConversationStore } from '../storeFactory.js';
 import { Entity, ConversationContext } from './entityExtractor.js';
 
 export const DEFAULT_CONVERSATION_CONFIG: ConversationConfig = {
@@ -38,8 +38,8 @@ export class ConversationManager {
         private readonly config: ConversationConfig = DEFAULT_CONVERSATION_CONFIG,
         store?: ConversationStore
     ) {
-        // Default to in-memory store if none provided (backward compatible)
-        this.store = store ?? new InMemoryConversationStore(config);
+        // Use factory to create store based on environment config if none provided
+        this.store = store ?? createConversationStore(config);
     }
 
     /**
@@ -216,7 +216,7 @@ export class ConversationManager {
      */
     async setConversationName(chatId: string, name: string): Promise<void> {
         const conversation = await this.store.get(chatId);
-        
+
         if (!conversation) {
             console.warn(`[ConversationManager] Cannot set name for non-existent conversation: ${chatId}`);
             return;

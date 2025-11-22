@@ -21,3 +21,6 @@ coverage/
 
 # OS / editor cruft
 .DS_Store
+
+# SQLite database files
+data/

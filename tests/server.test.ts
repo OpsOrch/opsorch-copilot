@@ -1,10 +1,15 @@
-import { test } from 'node:test';
+import { test, before } from 'node:test';
 import assert from 'node:assert';
 import { createApp } from '../src/server.js';
 import { type IncomingMessage, type ServerResponse } from 'node:http';
 import type { Express } from 'express';
 import { LlmClient, Tool, ToolCall } from '../src/types.js';
 import { makeEngine, StubMcp } from './helpers/copilotTestUtils.js';
+
+// Ensure tests use in-memory storage
+before(() => {
+    process.env.CONVERSATION_STORE_TYPE = 'memory';
+});
 
 /**
  * Create a test app with mocked MCP and LLM

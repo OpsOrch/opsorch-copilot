@@ -43,6 +43,7 @@ OpsOrch Copilot is the AI runtime that orchestrates reasoning, prompting, and to
   - `llms/mock.ts` – mock LLM that returns deterministic tool plans and ids.
   - `llms/openai.ts` – OpenAI client; set `LLM_PROVIDER=openai` and `OPENAI_API_KEY`, optional `OPENAI_MODEL`/`OPENAI_BASE_URL`.
   - `server.ts` – HTTP API exposing Copilot chat with conversation IDs and pluggable LLM via env `LLM_PROVIDER`.
+  - `stores/` – conversation storage implementations (in-memory and SQLite).
 
 ### HTTP API (console/CLI integration)
 
@@ -51,3 +52,56 @@ OpsOrch Copilot is the AI runtime that orchestrates reasoning, prompting, and to
   - Response: `{ "chatId": "<id>", "answer": { conclusion, evidence?, missing?, chatId? } }`
   - Stateless: no server-side conversation store. If `chatId` is not provided, the response echoes provider-supplied IDs so callers can persist and reuse them.
 - `GET /health` – liveness check: `{ "status": "ok" }`
+
+### Conversation Storage
+
+Copilot supports two storage backends for conversation persistence:
+
+#### In-Memory Storage (Default)
+- Conversations are stored in memory with LRU eviction
+- Data is lost on server restart
+- No configuration required
+
+#### SQLite Storage
+- Conversations persist across server restarts
+- Stored in a local SQLite database file
+- Maintains the same LRU eviction behavior as in-memory storage
+
+**Configuration:**
+
+Set the following environment variables to enable SQLite storage:
+
+```bash
+# Enable SQLite storage
+CONVERSATION_STORE_TYPE=sqlite
+
+# Optional: specify database file path (default: ./data/conversations.db)
+SQLITE_DB_PATH=/path/to/conversations.db
+```
+
+**Docker Example:**
+
+```yaml
+services:
+  copilot:
+    image: opsorch-copilot:latest
+    environment:
+      - CONVERSATION_STORE_TYPE=sqlite
+      - SQLITE_DB_PATH=/data/conversations.db
+    volumes:
+      - copilot-data:/data
+volumes:
+  copilot-data:
+```
+
+**Backup and Recovery:**
+
+For SQLite storage, regular backups of the database file are recommended:
+
+```bash
+# Backup
+cp /path/to/conversations.db /path/to/backup/conversations-$(date +%Y%m%d).db
+
+# Restore
+cp /path/to/backup/conversations-20250122.db /path/to/conversations.db
+```
