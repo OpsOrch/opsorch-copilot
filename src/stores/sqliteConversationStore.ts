@@ -23,7 +23,7 @@ function createSnippet(
     query: string
 ): MatchingTurn {
     let text = '';
-    
+
     if (matchType === 'user') {
         text = turn.userMessage;
     } else if (matchType === 'assistant' && turn.assistantResponse) {
@@ -31,19 +31,19 @@ function createSnippet(
     } else if (matchType === 'entity' && turn.entities) {
         text = turn.entities.map(e => e.value).join(', ');
     }
-    
+
     const lowerText = text.toLowerCase();
     const lowerQuery = query.toLowerCase();
     const matchIndex = lowerText.indexOf(lowerQuery);
-    
+
     let snippet = text;
-    
+
     if (matchIndex !== -1 && text.length > 200) {
         const start = Math.max(0, matchIndex - 50);
         const end = Math.min(text.length, start + 200);
-        
+
         snippet = text.substring(start, end);
-        
+
         if (start > 0) {
             snippet = '...' + snippet;
         }
@@ -53,7 +53,7 @@ function createSnippet(
     } else if (text.length > 200) {
         snippet = text.substring(0, 200) + '...';
     }
-    
+
     return {
         turnIndex,
         snippet,
@@ -89,7 +89,9 @@ export class SqliteConversationStore implements ConversationStore {
 
             // Configure SQLite for better concurrency and performance
             this.db.pragma('journal_mode = WAL'); // Write-Ahead Logging
+            this.db.pragma('synchronous = NORMAL'); // Balance between safety and performance
             this.db.pragma('busy_timeout = 5000'); // Wait up to 5 seconds on lock
+            this.db.pragma('wal_autocheckpoint = 1000'); // Checkpoint every 1000 pages
 
             // Initialize schema
             this.initializeSchema();
@@ -306,10 +308,28 @@ export class SqliteConversationStore implements ConversationStore {
      */
     async close(): Promise<void> {
         try {
+            // Checkpoint WAL to ensure all data is written to main database file
+            console.log('[SqliteConversationStore] Checkpointing WAL before close...');
+            this.db.pragma('wal_checkpoint(TRUNCATE)');
+
+            // Close the database
             this.db.close();
+            console.log('[SqliteConversationStore] Database closed successfully');
         } catch (error: any) {
             console.error(`Error closing database: ${error.message}`);
             throw error;
+        }
+    }
+
+    /**
+     * Manually flush changes to disk.
+     * Useful for ensuring data persistence before shutdown.
+     */
+    async flush(): Promise<void> {
+        try {
+            this.db.pragma('wal_checkpoint(PASSIVE)');
+        } catch (error: any) {
+            console.warn(`[SqliteConversationStore] Failed to flush: ${error.message}`);
         }
     }
 

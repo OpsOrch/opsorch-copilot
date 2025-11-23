@@ -45,6 +45,7 @@ export class ConversationManager {
     /**
      * Get conversation history for a chatId.
      * Returns null if conversation doesn't exist or has expired.
+     * Updates the lastAccessedAt timestamp.
      */
     async getConversation(chatId: string): Promise<Conversation | null> {
         const conversation = await this.store.get(chatId);
@@ -63,6 +64,26 @@ export class ConversationManager {
         // Update access time
         conversation.lastAccessedAt = Date.now();
         await this.store.set(chatId, conversation);
+
+        return conversation;
+    }
+
+    /**
+     * Get conversation without updating lastAccessedAt.
+     * Useful for read-only operations like displaying conversation metadata.
+     */
+    async peekConversation(chatId: string): Promise<Conversation | null> {
+        const conversation = await this.store.get(chatId);
+
+        if (!conversation) {
+            return null;
+        }
+
+        // Check if expired
+        const age = Date.now() - conversation.lastAccessedAt;
+        if (age > this.config.conversationTTLMs) {
+            return null; // Don't delete, just return null
+        }
 
         return conversation;
     }
