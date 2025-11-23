@@ -1,6 +1,7 @@
 import { ToolCall, ToolResult, Tool } from '../types.js';
 import { McpClient } from '../mcpClient.js';
 import { runToolCalls } from './toolRunner.js';
+import { DomainRegistry } from './domainRegistry.js';
 
 /**
  * Represents a tool call with its dependencies
@@ -15,6 +16,8 @@ export interface ToolDependency {
  * respecting dependencies between tools.
  */
 export class ParallelToolRunner {
+  constructor(private registry: DomainRegistry) { }
+
   /**
    * Analyze tool calls to build dependency graph
    */
@@ -95,65 +98,59 @@ export class ParallelToolRunner {
   }
 
   /**
-   * Identify dependencies for a tool call
+   * Identify dependencies for a tool call using domain configuration
    */
   private identifyDependencies(call: ToolCall, allCalls: ToolCall[]): string[] {
     const deps: string[] = [];
 
-    // Rule 1: get-incident-timeline depends on query-incidents or get-incident
-    if (call.name === 'get-incident-timeline') {
-      // Check if incident ID is provided explicitly
-      const hasIncidentId =
-        call.arguments?.id && typeof call.arguments.id === 'string';
+    // Get domain for this tool
+    const domain = this.registry.getDomainForTool(call.name);
+    if (!domain?.followUp?.toolDependencies) {
+      return deps;
+    }
 
-      if (!hasIncidentId) {
-        // Depends on any incident query that comes before it
-        const incidentQueries = allCalls.filter(
+    // Check each configured dependency
+    for (const depConfig of domain.followUp.toolDependencies) {
+      // Check if this tool matches the dependency pattern
+      const toolMatches = this.matchesPattern(call.name, depConfig.tool);
+      if (!toolMatches) {
+        continue;
+      }
+
+      // If requiresExplicitId is true, check if ID is provided
+      if (depConfig.requiresExplicitId) {
+        const hasExplicitId = call.arguments?.id && typeof call.arguments.id === 'string';
+        if (hasExplicitId) {
+          continue; // Has explicit ID, no dependency needed
+        }
+      }
+
+      // Find matching tools that come before this call
+      for (const dependsOnPattern of depConfig.dependsOn) {
+        const matchingTools = allCalls.filter(
           (c) =>
-            (c.name === 'query-incidents' || c.name === 'get-incident') &&
+            this.matchesPattern(c.name, dependsOnPattern) &&
             allCalls.indexOf(c) < allCalls.indexOf(call)
         );
-        if (incidentQueries.length > 0) {
-          deps.push(...incidentQueries.map((c) => c.name));
+        if (matchingTools.length > 0) {
+          deps.push(...matchingTools.map((c) => c.name));
         }
       }
     }
 
-    // Rule 2: get-ticket depends on query-tickets
-    if (call.name === 'get-ticket') {
-      const hasTicketId =
-        call.arguments?.id && typeof call.arguments.id === 'string';
+    return [...new Set(deps)]; // Remove duplicates
+  }
 
-      if (!hasTicketId) {
-        const ticketQueries = allCalls.filter(
-          (c) =>
-            c.name === 'query-tickets' &&
-            allCalls.indexOf(c) < allCalls.indexOf(call)
-        );
-        if (ticketQueries.length > 0) {
-          deps.push(...ticketQueries.map((c) => c.name));
-        }
-      }
+  /**
+   * Check if a tool name matches a pattern (supports exact match or wildcards)
+   */
+  private matchesPattern(toolName: string, pattern: string): boolean {
+    if (pattern === toolName) {
+      return true; // Exact match
     }
-
-    // Rule 3: update-* operations depend on get-* operations for the same resource
-    if (call.name.startsWith('update-')) {
-      const resourceType = call.name.replace('update-', '');
-      const getOperation = `get-${resourceType}`;
-
-      const getCall = allCalls.find(
-        (c) =>
-          c.name === getOperation && allCalls.indexOf(c) < allCalls.indexOf(call)
-      );
-      if (getCall) {
-        deps.push(getCall.name);
-      }
-    }
-
-    // Rule 4: Tools with explicit IDs in arguments have no dependencies
-    // (already handled above by checking for explicit IDs)
-
-    return deps;
+    // Simple wildcard support: convert * to .*
+    const regexPattern = pattern.replace(/\*/g, '.*');
+    return new RegExp(`^${regexPattern}$`).test(toolName);
   }
 
   /**

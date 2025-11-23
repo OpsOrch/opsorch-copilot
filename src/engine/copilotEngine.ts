@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { McpFactory } from '../mcpFactory.js';
-import { McpClient } from '../mcpClient.js';
+import type { McpClient } from '../mcpClient.js';
 import {
   CopilotAnswer,
   RuntimeConfig,
@@ -8,12 +8,10 @@ import {
   ToolCall,
   ToolResult,
 } from '../types.js';
-import { applyFollowUpHeuristics } from './followUpHeuristics.js';
 import {
   requestFollowUpPlan,
   requestInitialPlan,
 } from './planner.js';
-import { applyQuestionHeuristics } from './questionHeuristics.js';
 import { synthesizeCopilotAnswer } from './synthesis.js';
 import { runToolCalls } from './toolRunner.js';
 
@@ -23,6 +21,11 @@ import { ChatNamer } from './chatNamer.js';
 import { ExecutionTracer, ExecutionTrace } from './executionTracer.js';
 import { EntityExtractor } from './entityExtractor.js';
 import { ParallelToolRunner } from './parallelToolRunner.js';
+import { ReferenceResolver } from './referenceResolver.js';
+import { FollowUpEngine } from './followUpEngine.js';
+import { QuestionEngine } from './questionEngine.js';
+import { ScopeInferer } from './scopeInferer.js';
+import { domainRegistry } from './domainRegistry.js';
 
 const DEFAULT_MAX_ITERATIONS = 3;
 const MAX_TOOL_CALLS_PER_ITERATION = 3;
@@ -50,7 +53,11 @@ export class CopilotEngine {
   private readonly chatNamer: ChatNamer;
   private readonly executionTracer: ExecutionTracer;
   private readonly entityExtractor: EntityExtractor;
+  private readonly referenceResolver: ReferenceResolver;
   private readonly parallelToolRunner: ParallelToolRunner;
+  private readonly followUpEngine: FollowUpEngine;
+  private readonly questionEngine: QuestionEngine;
+  private readonly scopeInferer: ScopeInferer;
   private readonly maxIterations: number;
 
   constructor(private readonly config: RuntimeConfig) {
@@ -60,7 +67,11 @@ export class CopilotEngine {
     this.chatNamer = new ChatNamer();
     this.executionTracer = new ExecutionTracer();
     this.entityExtractor = new EntityExtractor();
-    this.parallelToolRunner = new ParallelToolRunner();
+    this.referenceResolver = new ReferenceResolver();
+    this.parallelToolRunner = new ParallelToolRunner(domainRegistry);
+    this.scopeInferer = new ScopeInferer(domainRegistry);
+    this.followUpEngine = new FollowUpEngine(domainRegistry);
+    this.questionEngine = new QuestionEngine(domainRegistry, this.scopeInferer);
     this.maxIterations = config.maxIterations ?? DEFAULT_MAX_ITERATIONS;
   }
 
@@ -70,6 +81,15 @@ export class CopilotEngine {
    */
   async ensureTools(): Promise<void> {
     await this.mcp.ensureTools();
+  }
+
+  /**
+   * Filter out internal diagnostic tools that shouldn't be called by the LLM.
+   * These tools are for system health checks, not for answering user questions.
+   */
+  private filterToolsForLLM(tools: Tool[]): Tool[] {
+    const INTERNAL_TOOLS = ['health'];
+    return tools.filter(tool => !INTERNAL_TOOLS.includes(tool.name));
   }
 
   /**
@@ -258,8 +278,8 @@ export class CopilotEngine {
 
     // Step 4: Get entities from conversation and resolve references in question
     const entityContext = await this.conversationManager.getEntities(chatId);
-    const resolutions = this.entityExtractor.resolveReference(question, entityContext);
-    const resolvedQuestion = this.entityExtractor.applyResolutions(question, resolutions);
+    const resolutions = this.referenceResolver.resolveReferences(question, entityContext);
+    const resolvedQuestion = this.referenceResolver.applyResolutions(question, resolutions);
 
     if (resolutions.size > 0) {
       console.log(`[Copilot][${chatId}] Resolved ${resolutions.size} entity reference(s) in question`);
@@ -289,7 +309,7 @@ export class CopilotEngine {
         const plan = await requestInitialPlan(
           questionForPlanning,
           this.config.llm,
-          this.mcp.getTools(),
+          this.filterToolsForLLM(this.mcp.getTools()),
           conversationHistory,
         );
         plannedCalls = plan.toolCalls ?? [];
@@ -299,7 +319,7 @@ export class CopilotEngine {
 
         // Apply heuristics only on initial plan
         const beforeHeuristics = plannedCalls.length;
-        plannedCalls = await applyQuestionHeuristics(
+        plannedCalls = await this.questionEngine.applyHeuristics(
           questionForPlanning,
           plannedCalls,
           this.mcp,
@@ -324,7 +344,7 @@ export class CopilotEngine {
         const plan = await requestFollowUpPlan(
           questionForPlanning,
           this.config.llm,
-          this.mcp.getTools(),
+          this.filterToolsForLLM(this.mcp.getTools()),
           formattedResults,
           conversationHistory,
         );
@@ -335,7 +355,7 @@ export class CopilotEngine {
 
         // Apply follow-up heuristics
         const beforeHeuristics = plannedCalls.length;
-        plannedCalls = applyFollowUpHeuristics({
+        plannedCalls = this.followUpEngine.applyFollowUps({
           question: questionForPlanning,
           results: formattedResults,
           proposed: plannedCalls,
@@ -449,6 +469,7 @@ export class CopilotEngine {
       allResults,
       chatId,
       this.config.llm,
+      domainRegistry,
     );
 
     // Step 6: Save conversation turn with extracted entities

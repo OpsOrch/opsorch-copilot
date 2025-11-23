@@ -1,15 +1,18 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-    buildLogQuery,
-    buildMetricsExpression,
+    QueryBuilder,
     getDefaultTimeWindow,
     parseTimeWindow
 } from '../src/engine/queryBuilder.js';
-import type { ConversationContext } from '../src/engine/intentClassifier.js';
+import { DomainRegistry } from '../src/engine/domainRegistry.js';
+import { logDomain } from '../src/engine/domains/log.js';
+import { metricDomain } from '../src/engine/domains/metric.js';
+import { incidentDomain } from '../src/engine/domains/incident.js';
+import type { IntentContext } from '../src/types.js';
 
 // Helper to create context
-const makeContext = (overrides: Partial<ConversationContext> = {}): ConversationContext => ({
+const makeContext = (overrides: Partial<IntentContext> = {}): IntentContext => ({
     lastToolsUsed: [],
     lastToolArgs: [],
     turnNumber: 0,
@@ -17,93 +20,173 @@ const makeContext = (overrides: Partial<ConversationContext> = {}): Conversation
     ...overrides,
 });
 
-// buildLogQuery tests
+// Helper to create registry with domains
+const makeRegistry = (): DomainRegistry => {
+    const registry = new DomainRegistry();
+    registry.register(logDomain);
+    registry.register(metricDomain);
+    registry.register(incidentDomain);
+    return registry;
+};
 
-test('buildLogQuery extracts error codes', () => {
-    const query = buildLogQuery('show me 500 errors', makeContext());
-    assert.ok(query.includes('500'));
+// QueryBuilder.buildQuery tests for log domain
+
+test('QueryBuilder.buildQuery extracts error codes for log domain', () => {
+    const builder = new QueryBuilder(makeRegistry());
+    const query = builder.buildQuery('log', 'show me 500 errors', makeContext());
+    assert.ok(typeof query === 'string' && query.includes('500'));
 });
 
-test('buildLogQuery extracts 5xx pattern', () => {
-    const query = buildLogQuery('show me 5xx errors', makeContext());
-    assert.ok(query.includes('5x'));
+test('QueryBuilder.buildQuery extracts 5xx pattern for log domain', () => {
+    const builder = new QueryBuilder(makeRegistry());
+    const query = builder.buildQuery('log', 'show me 5xx errors', makeContext());
+    assert.ok(typeof query === 'string' && query.includes('5x'));
 });
 
-test('buildLogQuery extracts 404 errors', () => {
-    const query = buildLogQuery('show me 404 errors', makeContext());
-    assert.ok(query.includes('404'));
+test('QueryBuilder.buildQuery extracts 404 errors for log domain', () => {
+    const builder = new QueryBuilder(makeRegistry());
+    const query = builder.buildQuery('log', 'show me 404 errors', makeContext());
+    assert.ok(typeof query === 'string' && query.includes('404'));
 });
 
-test('buildLogQuery extracts error keywords', () => {
-    const query = buildLogQuery('show me timeout exceptions', makeContext());
-    assert.ok(query.includes('timeout'));
-    assert.ok(query.includes('exception'));
+test('QueryBuilder.buildQuery extracts error keywords for log domain', () => {
+    const builder = new QueryBuilder(makeRegistry());
+    const query = builder.buildQuery('log', 'show me timeout exceptions', makeContext());
+    assert.ok(typeof query === 'string' && query.includes('timeout'));
+    assert.ok(typeof query === 'string' && query.includes('exception'));
 });
 
-test('buildLogQuery handles "disconnect" keyword', () => {
-    const query = buildLogQuery('websocket disconnect errors', makeContext());
-    assert.ok(query.includes('disconnect'));
-    assert.ok(query.includes('websocket'));
-    assert.ok(query.includes('error'));
+test('QueryBuilder.buildQuery handles priority terms from domain config', () => {
+    const builder = new QueryBuilder(makeRegistry());
+    const query = builder.buildQuery('log', 'websocket disconnect errors', makeContext());
+    assert.ok(typeof query === 'string' && query.includes('disconnect'));
+    assert.ok(typeof query === 'string' && query.includes('websocket'));
 });
 
-test('buildLogQuery defaults to "error OR exception"', () => {
-    const query = buildLogQuery('show me logs', makeContext());
+test('QueryBuilder.buildQuery defaults to configured default query', () => {
+    const builder = new QueryBuilder(makeRegistry());
+    const query = builder.buildQuery('log', 'show me logs', makeContext());
     assert.equal(query, 'error OR exception');
 });
 
-test('buildLogQuery uses incident context when no patterns found', () => {
-    const context = makeContext({ lastIncident: 'inc-123' });
-    const query = buildLogQuery('show me logs', context);
-    assert.ok(query.includes('error') || query.includes('exception'));
+test('QueryBuilder.buildQuery uses incident context when no patterns found', () => {
+    const builder = new QueryBuilder(makeRegistry());
+    const context = makeContext({ recentEntities: { incident: 'inc-123' } });
+    const query = builder.buildQuery('log', 'show me logs', context);
+    assert.ok(typeof query === 'string' && (query.includes('error') || query.includes('exception')));
 });
 
-test('buildLogQuery deduplicates keywords', () => {
-    const query = buildLogQuery('error error error', makeContext());
+test('QueryBuilder.buildQuery deduplicates keywords', () => {
+    const builder = new QueryBuilder(makeRegistry());
+    const query = builder.buildQuery('log', 'error error error', makeContext());
+    assert.ok(typeof query === 'string');
     const errorCount = (query.match(/error/g) || []).length;
     assert.equal(errorCount, 1);
 });
 
-// buildMetricsExpression tests
-
-test('buildMetricsExpression detects latency', () => {
-    assert.equal(buildMetricsExpression('show me latency', makeContext()), 'latency_p95');
+test('QueryBuilder.buildQuery handles missing domain gracefully', () => {
+    const registry = new DomainRegistry();
+    const builder = new QueryBuilder(registry);
+    const query = builder.buildQuery('log', 'show me logs', makeContext());
+    assert.equal(query, 'error OR exception');
 });
 
-test('buildMetricsExpression detects p95', () => {
-    assert.equal(buildMetricsExpression('what is the p95', makeContext()), 'latency_p95');
+// QueryBuilder.buildQuery tests for metric domain
+
+test('QueryBuilder.buildQuery detects latency for metric domain', () => {
+    const builder = new QueryBuilder(makeRegistry());
+    assert.equal(builder.buildQuery('metric', 'show me latency', makeContext()), 'latency_p95');
 });
 
-test('buildMetricsExpression detects p99', () => {
-    assert.equal(buildMetricsExpression('check p99 latency', makeContext()), 'latency_p95');
+test('QueryBuilder.buildQuery detects p95 for metric domain', () => {
+    const builder = new QueryBuilder(makeRegistry());
+    assert.equal(builder.buildQuery('metric', 'what is the p95', makeContext()), 'latency_p95');
 });
 
-test('buildMetricsExpression detects error rate', () => {
-    assert.equal(buildMetricsExpression('show me error rate', makeContext()), 'error_rate');
+test('QueryBuilder.buildQuery detects p99 for metric domain', () => {
+    const builder = new QueryBuilder(makeRegistry());
+    assert.equal(builder.buildQuery('metric', 'check p99', makeContext()), 'latency_p99');
 });
 
-test('buildMetricsExpression detects failures', () => {
-    assert.equal(buildMetricsExpression('show me failures', makeContext()), 'error_rate');
+test('QueryBuilder.buildQuery detects error rate for metric domain', () => {
+    const builder = new QueryBuilder(makeRegistry());
+    assert.equal(builder.buildQuery('metric', 'show me error rate', makeContext()), 'error_rate');
 });
 
-test('buildMetricsExpression detects CPU', () => {
-    assert.equal(buildMetricsExpression('show me cpu usage', makeContext()), 'cpu_usage');
+test('QueryBuilder.buildQuery detects CPU for metric domain', () => {
+    const builder = new QueryBuilder(makeRegistry());
+    assert.equal(builder.buildQuery('metric', 'show me cpu usage', makeContext()), 'cpu_usage');
 });
 
-test('buildMetricsExpression detects memory', () => {
-    assert.equal(buildMetricsExpression('show me memory', makeContext()), 'memory_usage');
+test('QueryBuilder.buildQuery detects memory for metric domain', () => {
+    const builder = new QueryBuilder(makeRegistry());
+    assert.equal(builder.buildQuery('metric', 'show me memory', makeContext()), 'memory_usage');
 });
 
-test('buildMetricsExpression detects throughput', () => {
-    assert.equal(buildMetricsExpression('show me throughput', makeContext()), 'request_rate');
+test('QueryBuilder.buildQuery detects contextual metrics for metric domain', () => {
+    const builder = new QueryBuilder(makeRegistry());
+    assert.equal(builder.buildQuery('metric', 'show me database metrics', makeContext()), 'db_connections');
 });
 
-test('buildMetricsExpression detects QPS', () => {
-    assert.equal(buildMetricsExpression('what is the qps', makeContext()), 'request_rate');
+test('QueryBuilder.buildQuery defaults to configured default for metric domain', () => {
+    const builder = new QueryBuilder(makeRegistry());
+    assert.equal(builder.buildQuery('metric', 'show me metrics', makeContext()), 'latency_p95');
 });
 
-test('buildMetricsExpression defaults to latency_p95', () => {
-    assert.equal(buildMetricsExpression('show me metrics', makeContext()), 'latency_p95');
+test('QueryBuilder.buildQuery handles missing metric domain gracefully', () => {
+    const registry = new DomainRegistry();
+    const builder = new QueryBuilder(registry);
+    assert.equal(builder.buildQuery('metric', 'show me metrics', makeContext()), 'latency_p95');
+});
+
+// QueryBuilder.buildQuery tests for incident domain
+
+test('QueryBuilder.buildQuery extracts status keywords for incident domain', () => {
+    const builder = new QueryBuilder(makeRegistry());
+    const query = builder.buildQuery('incident', 'show me open incidents', makeContext());
+    assert.ok(typeof query === 'object');
+    assert.equal((query as any).status, 'open');
+});
+
+test('QueryBuilder.buildQuery extracts active status for incident domain', () => {
+    const builder = new QueryBuilder(makeRegistry());
+    const query = builder.buildQuery('incident', 'show me active incidents', makeContext());
+    assert.ok(typeof query === 'object');
+    assert.equal((query as any).status, 'open');
+});
+
+test('QueryBuilder.buildQuery extracts closed status for incident domain', () => {
+    const builder = new QueryBuilder(makeRegistry());
+    const query = builder.buildQuery('incident', 'show me closed incidents', makeContext());
+    assert.ok(typeof query === 'object');
+    assert.equal((query as any).status, 'closed');
+});
+
+test('QueryBuilder.buildQuery extracts severity patterns for incident domain', () => {
+    const builder = new QueryBuilder(makeRegistry());
+    const query = builder.buildQuery('incident', 'show me sev-1 incidents', makeContext());
+    assert.ok(typeof query === 'object');
+    assert.equal((query as any).severity, '1');
+});
+
+test('QueryBuilder.buildQuery extracts severity without dash for incident domain', () => {
+    const builder = new QueryBuilder(makeRegistry());
+    const query = builder.buildQuery('incident', 'show me sev3 incidents', makeContext());
+    assert.ok(typeof query === 'object');
+    assert.equal((query as any).severity, '3');
+});
+
+test('QueryBuilder.buildQuery returns empty object when no patterns match for incident domain', () => {
+    const builder = new QueryBuilder(makeRegistry());
+    const query = builder.buildQuery('incident', 'show me incidents', makeContext());
+    assert.deepEqual(query, {});
+});
+
+test('QueryBuilder.buildQuery handles missing incident domain gracefully', () => {
+    const registry = new DomainRegistry();
+    const builder = new QueryBuilder(registry);
+    const query = builder.buildQuery('incident', 'show me incidents', makeContext());
+    assert.deepEqual(query, {});
 });
 
 // parseTimeWindow tests

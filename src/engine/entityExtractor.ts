@@ -1,5 +1,6 @@
+import { domainRegistry } from './domainRegistry.js';
 import { ToolResult } from '../types.js';
-
+import { isValidISO8601 } from './timestampUtils.js';
 /**
  * Represents an entity extracted from tool results or conversation
  */
@@ -22,63 +23,105 @@ export interface ConversationContext {
 /**
  * EntityExtractor extracts and resolves entity references from tool results
  * and user questions to enable natural conversation flow.
+ * 
+ * Now uses DomainRegistry for configuration-driven extraction.
  */
 export class EntityExtractor {
   /**
-   * Extract entities from tool results
+   * Extract entities from tool results using domain configurations
    */
   extractFromResults(results: ToolResult[]): Entity[] {
     const entities: Entity[] = [];
     const now = Date.now();
 
     for (const result of results) {
-      // Extract incident IDs
-      const incidentIds = this.extractIncidentIds(result.result);
-      for (const id of incidentIds) {
-        entities.push({
-          type: 'incident',
-          value: id,
-          extractedAt: now,
-          source: result.name,
-        });
+      // Get domain for this tool
+      const domain = domainRegistry.getDomainForTool(result.name);
+      if (!domain) {
+        // Skip tools without domain configuration
+        continue;
       }
 
-      // Extract service names
-      const services = this.extractServices(result.result);
-      for (const service of services) {
-        entities.push({
-          type: 'service',
-          value: service,
-          extractedAt: now,
-          source: result.name,
-        });
-      }
+      // Extract entities using domain's entity configurations
+      for (const entityConfig of domain.entities) {
+        const extractedValues = this.extractEntitiesUsingConfig(
+          result.result,
+          entityConfig.idPaths,
+          entityConfig.idPattern
+        );
 
-      // Extract timestamps
-      const timestamps = this.extractTimestamps(result.result);
-      for (const timestamp of timestamps) {
-        entities.push({
-          type: 'timestamp',
-          value: timestamp,
-          extractedAt: now,
-          source: result.name,
-        });
-      }
+        for (const value of extractedValues) {
+          entities.push({
+            type: entityConfig.type as any,
+            value,
+            extractedAt: now,
+            source: result.name,
+          });
+        }
 
-      // Extract ticket IDs
-      const ticketIds = this.extractTicketIds(result.result);
-      for (const id of ticketIds) {
-        entities.push({
-          type: 'ticket',
-          value: id,
-          extractedAt: now,
-          source: result.name,
-        });
+        // Extract timestamps if configured
+        if (entityConfig.timestampPaths) {
+          const timestamps = this.extractEntitiesUsingConfig(
+            result.result,
+            entityConfig.timestampPaths
+          );
+
+          // Limit to 5 timestamps
+          const limitedTimestamps = timestamps.slice(0, 5);
+
+          for (const timestamp of limitedTimestamps) {
+            if (isValidISO8601(timestamp)) {
+              entities.push({
+                type: 'timestamp' as any,
+                value: timestamp,
+                extractedAt: now,
+                source: result.name,
+              });
+            }
+          }
+        }
       }
     }
 
     return entities;
   }
+
+  /**
+   * Extract entities using simple key matching (no JSONPath)
+   */
+  private extractEntitiesUsingConfig(
+    payload: any,
+    keyPatterns: string[],
+    idPattern?: string
+  ): string[] {
+    const values = new Set<string>();
+
+    // Convert $.key patterns to simple key names
+    const keys = keyPatterns.map(p => p.replace(/^\$\./, '').replace(/^\$\[/, ''));
+
+    this.traversePayload(payload, (value, key) => {
+      if (key && keys.includes(key) && typeof value === 'string' && value.trim()) {
+        // Validate against pattern if provided
+        if (idPattern) {
+          try {
+            const regex = new RegExp(idPattern);
+            if (regex.test(value.trim())) {
+              values.add(value.trim());
+            }
+          } catch (error) {
+            // Invalid regex, skip validation
+            values.add(value.trim());
+          }
+        } else {
+          values.add(value.trim());
+        }
+      }
+    });
+
+    return Array.from(values);
+  }
+
+
 
   /**
    * Extract primary entities from conclusion text and compute prominence scores.
@@ -127,163 +170,6 @@ export class EntityExtractor {
   }
 
   /**
-   * Resolve references in user question to actual entity values
-   */
-  resolveReference(
-    question: string,
-    context: ConversationContext
-  ): Map<string, string> {
-    const resolutions = new Map<string, string>();
-    const normalized = question.toLowerCase();
-
-    // Resolve incident references
-    if (this.hasIncidentReference(normalized)) {
-      const incident = this.getMostRecentEntity(context, 'incident');
-      if (incident) {
-        resolutions.set('{{incident}}', incident.value);
-        resolutions.set('that incident', incident.value);
-        resolutions.set('this incident', incident.value);
-        resolutions.set('the incident', incident.value);
-      }
-    }
-
-    // Resolve service references
-    if (this.hasServiceReference(normalized)) {
-      const service = this.getMostRecentEntity(context, 'service');
-      if (service) {
-        resolutions.set('{{service}}', service.value);
-        resolutions.set('that service', service.value);
-        resolutions.set('this service', service.value);
-        resolutions.set('the service', service.value);
-      }
-    }
-
-    // Resolve time references
-    if (this.hasTimeReference(normalized)) {
-      const timestamp = this.getMostRecentEntity(context, 'timestamp');
-      if (timestamp) {
-        const resolvedTime = this.resolveTimeReference(normalized, timestamp.value);
-        if (resolvedTime) {
-          resolutions.set('{{time}}', resolvedTime);
-          resolutions.set('since then', resolvedTime);
-          resolutions.set('after that', resolvedTime);
-          resolutions.set('before that', resolvedTime);
-        }
-      }
-    }
-
-    // Resolve ticket references
-    if (this.hasTicketReference(normalized)) {
-      const ticket = this.getMostRecentEntity(context, 'ticket');
-      if (ticket) {
-        resolutions.set('{{ticket}}', ticket.value);
-        resolutions.set('that ticket', ticket.value);
-        resolutions.set('this ticket', ticket.value);
-        resolutions.set('the ticket', ticket.value);
-      }
-    }
-
-    return resolutions;
-  }
-
-  /**
-   * Apply resolutions to question text
-   */
-  applyResolutions(
-    question: string,
-    resolutions: Map<string, string>
-  ): string {
-    let resolved = question;
-
-    for (const [placeholder, value] of resolutions.entries()) {
-      // Case-insensitive replacement
-      const regex = new RegExp(placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
-      resolved = resolved.replace(regex, value);
-    }
-
-    return resolved;
-  }
-
-  /**
-   * Extract incident IDs from result payload
-   */
-  private extractIncidentIds(payload: any): string[] {
-    const ids = new Set<string>();
-    this.traversePayload(payload, (value, key) => {
-      if (
-        (key === 'id' || key === 'incidentId' || key === 'incident_id') &&
-        typeof value === 'string' &&
-        this.looksLikeIncidentId(value)
-      ) {
-        ids.add(value);
-      }
-    });
-    return Array.from(ids);
-  }
-
-  /**
-   * Extract service names from result payload
-   */
-  private extractServices(payload: any): string[] {
-    const services = new Set<string>();
-    this.traversePayload(payload, (value, key) => {
-      if (
-        (key === 'service' ||
-          key === 'serviceName' ||
-          key === 'service_name' ||
-          key === 'serviceId' ||
-          key === 'service_id') &&
-        typeof value === 'string' &&
-        value.trim()
-      ) {
-        services.add(value.trim());
-      }
-    });
-    return Array.from(services);
-  }
-
-  /**
-   * Extract ISO timestamps from result payload
-   */
-  private extractTimestamps(payload: any): string[] {
-    const timestamps = new Set<string>();
-    this.traversePayload(payload, (value, key) => {
-      if (
-        (key === 'timestamp' ||
-          key === 'startTime' ||
-          key === 'start_time' ||
-          key === 'endTime' ||
-          key === 'end_time' ||
-          key === 'createdAt' ||
-          key === 'created_at' ||
-          key === 'at') &&
-        typeof value === 'string' &&
-        this.isIsoTimestamp(value)
-      ) {
-        timestamps.add(value);
-      }
-    });
-    return Array.from(timestamps).slice(0, 5); // Limit to 5 most recent
-  }
-
-  /**
-   * Extract ticket IDs from result payload
-   */
-  private extractTicketIds(payload: any): string[] {
-    const ids = new Set<string>();
-    this.traversePayload(payload, (value, key) => {
-      if (
-        (key === 'ticketId' || key === 'ticket_id' || key === 'id') &&
-        typeof value === 'string' &&
-        this.looksLikeTicketId(value)
-      ) {
-        ids.add(value);
-      }
-    });
-    return Array.from(ids);
-  }
-
-  /**
    * Traverse payload and call visitor for each value
    */
   private traversePayload(
@@ -307,105 +193,5 @@ export class EntityExtractor {
     }
   }
 
-  /**
-   * Check if value looks like an incident ID
-   */
-  private looksLikeIncidentId(value: string): boolean {
-    // Match patterns like: INC-123, INCIDENT-456, inc_789
-    return /^(INC|INCIDENT|inc)[_-]?\d+$/i.test(value);
-  }
-
-  /**
-   * Check if value looks like a ticket ID
-   */
-  private looksLikeTicketId(value: string): boolean {
-    // Match patterns like: TICKET-123, TKT-456, JIRA-789
-    return /^(TICKET|TKT|JIRA|ticket|tkt)[_-]?\d+$/i.test(value);
-  }
-
-  /**
-   * Check if value is an ISO timestamp
-   */
-  private isIsoTimestamp(value: string): boolean {
-    return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(value);
-  }
-
-  /**
-   * Check if question has incident reference
-   */
-  private hasIncidentReference(question: string): boolean {
-    return /(that|this|the) incident/i.test(question);
-  }
-
-  /**
-   * Check if question has service reference
-   */
-  private hasServiceReference(question: string): boolean {
-    return /(that|this|the) service/i.test(question);
-  }
-
-  /**
-   * Check if question has time reference
-   */
-  private hasTimeReference(question: string): boolean {
-    return /(since then|after that|before that|around that time)/i.test(question);
-  }
-
-  /**
-   * Check if question has ticket reference
-   */
-  private hasTicketReference(question: string): boolean {
-    return /(that|this|the) ticket/i.test(question);
-  }
-
-  /**
-   * Get most recent entity of a given type.
-   * Uses prominence as a tiebreaker when multiple entities have the same timestamp.
-   */
-  private getMostRecentEntity(
-    context: ConversationContext,
-    type: Entity['type']
-  ): Entity | undefined {
-    const entities = context.entities.get(type);
-    if (!entities || entities.length === 0) return undefined;
-
-    // Find entity with highest timestamp, using prominence as tiebreaker
-    return entities.reduce((best, current) => {
-      // Compare timestamps first
-      if (current.extractedAt > best.extractedAt) return current;
-      if (current.extractedAt < best.extractedAt) return best;
-
-      // Timestamps are equal - use prominence as tiebreaker
-      const currentProm = current.prominence ?? 0;
-      const bestProm = best.prominence ?? 0;
-      return currentProm > bestProm ? current : best;
-    });
-  }
-
-  /**
-   * Resolve time reference relative to a timestamp
-   */
-  private resolveTimeReference(
-    question: string,
-    baseTimestamp: string
-  ): string | undefined {
-    try {
-      const baseTime = new Date(baseTimestamp).getTime();
-
-      if (/since then|after that/i.test(question)) {
-        // Return the base timestamp as the start time
-        return baseTimestamp;
-      }
-
-      if (/before that/i.test(question)) {
-        // Return a time before the base timestamp (e.g., 1 hour before)
-        const beforeTime = new Date(baseTime - 60 * 60 * 1000);
-        return beforeTime.toISOString();
-      }
-
-      return baseTimestamp;
-    } catch {
-      return undefined;
-    }
-  }
 }
+

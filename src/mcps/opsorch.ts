@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { JsonObject, Tool, ToolCall, ToolResult } from '../types.js';
 import { McpClient } from '../mcpClient.js';
+import { withRetry } from '../engine/retryStrategy.js';
 
 const jsonRpcResponseSchema = z.object({
     jsonrpc: z.literal('2.0'),
@@ -56,12 +57,19 @@ export class OpsOrchMcp implements McpClient {
     }
 
     async callTool(call: ToolCall): Promise<ToolResult> {
-        const res = await this.post({
-            jsonrpc: '2.0',
-            id: Date.now(),
-            method: 'tools/call',
-            params: { name: call.name, arguments: call.arguments },
-        });
+        const res = await withRetry(
+            async () => {
+                return await this.post({
+                    jsonrpc: '2.0',
+                    id: Date.now(),
+                    method: 'tools/call',
+                    params: { name: call.name, arguments: call.arguments },
+                });
+            },
+            { maxRetries: 2, baseDelayMs: 500 },
+            `mcp-tool-${call.name}`
+        );
+
         const parsed = jsonRpcResponseSchema.parse(res);
         if (parsed.error) {
             throw new Error(`tools/call ${call.name} failed: ${parsed.error.message}`);

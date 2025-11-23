@@ -1,12 +1,13 @@
 import { CopilotAnswer, LlmClient, LlmMessage, ToolResult } from '../types.js';
 import { buildFinalAnswerPrompt } from '../prompts.js';
 import { formatAnswer } from './answerFormatter.js';
-import { sanitizeReferences } from './references.js';
+import { sanitizeReferences } from './referenceBuilder.js';
 import { ContextManager } from './contextManager.js';
 import { CorrelationDetector } from './correlationDetector.js';
+import { AnomalyDetector } from './anomalyDetector.js';
+import { DomainRegistry } from './domainRegistry.js';
 
 const contextManager = new ContextManager();
-const correlationDetector = new CorrelationDetector();
 
 /**
  * Extract JSON content from markdown code blocks.
@@ -30,11 +31,13 @@ export async function synthesizeCopilotAnswer(
   results: ToolResult[],
   chatId: string,     // app-level chat id for logging/correlation
   llm: LlmClient,
+  domainRegistry: DomainRegistry,
 ): Promise<CopilotAnswer> {
   const fallback = formatAnswer(question, results, chatId);
   if (!results.length) return fallback;
 
-  // Detect correlations between events
+  // Detect correlations between events using domain-based categorization
+  const correlationDetector = new CorrelationDetector(domainRegistry);
   const events = correlationDetector.extractEvents(results);
   const correlations = correlationDetector.detectCorrelations(events);
   const rootCause = correlationDetector.identifyRootCause(correlations);
@@ -43,6 +46,28 @@ export async function synthesizeCopilotAnswer(
     console.log(`[Copilot][${chatId}] Detected ${correlations.length} correlation(s)`);
     if (rootCause) {
       console.log(`[Copilot][${chatId}] Potential root cause: ${rootCause.type} at ${rootCause.timestamp}`);
+    }
+  }
+
+  // Detect anomalies in metric data
+  const anomalyDetector = new AnomalyDetector(domainRegistry);
+  const metricSeries = anomalyDetector.extractMetricSeries(results);
+
+  // Collect all anomalies and trends from all metric series
+  const allAnomalies: any[] = [];
+  const allTrends: any[] = [];
+
+  for (const series of metricSeries) {
+    const anomalies = anomalyDetector.detectAnomalies(series);
+    const trends = anomalyDetector.detectTrends(series);
+    allAnomalies.push(...anomalies);
+    allTrends.push(...trends);
+  }
+
+  if (allAnomalies.length > 0) {
+    console.log(`[Copilot][${chatId}] Detected ${allAnomalies.length} anomaly(ies)`);
+    for (const anomaly of allAnomalies.slice(0, 3)) {
+      console.log(`  - ${anomaly.metric}: ${anomaly.type} (${anomaly.severity}) at ${anomaly.timestamp}`);
     }
   }
 
@@ -61,6 +86,27 @@ export async function synthesizeCopilotAnswer(
     }
   }
 
+  // Add anomaly context to synthesis if found
+  let anomalyContext = '';
+  if (allAnomalies.length > 0) {
+    anomalyContext = '\n\nDetected Anomalies:\n';
+    for (const anomaly of allAnomalies.slice(0, 5)) {
+      anomalyContext += `- ${anomaly.metric}: ${anomaly.type} `;
+      anomalyContext += `(${anomaly.severity}, value: ${anomaly.value.toFixed(2)} at ${anomaly.timestamp})\n`;
+    }
+  }
+
+  if (allTrends.length > 0) {
+    anomalyContext += '\nTrends:\n';
+    for (const trend of allTrends.slice(0, 3)) {
+      const direction = trend.direction === 'increasing' ? '↗' : '↘';
+      const change = (trend.slope * 100).toFixed(1);
+      const changeNum = trend.slope * 100;
+      anomalyContext += `- ${trend.metric}: ${direction} ${trend.direction} `;
+      anomalyContext += `(${changeNum > 0 ? '+' : ''}${change}%)\n`;
+    }
+  }
+
   const messages: LlmMessage[] = [
     { role: 'system', content: buildFinalAnswerPrompt() },
     {
@@ -69,6 +115,7 @@ export async function synthesizeCopilotAnswer(
         `Question: ${question}\n` +
         `Tool results:\n${condensedResults}\n` +
         correlationContext +
+        anomalyContext +
         `Return only the JSON object.`,
     },
   ];

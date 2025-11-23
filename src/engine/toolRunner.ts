@@ -4,6 +4,7 @@ import { normalizeToolResultPayload } from './toolResultNormalizer.js';
 import { withRetry } from './retryStrategy.js';
 import { validateToolCall } from './toolsSchema.js';
 import { TimeWindowExpander } from './timeWindowExpander.js';
+import { domainRegistry } from './domainRegistry.js';
 
 export async function runToolCalls(
   calls: ToolCall[],
@@ -15,7 +16,7 @@ export async function runToolCalls(
   if (!calls.length) return [];
 
   const toolMap = new Map(tools.map((t) => [t.name, t]));
-  const windowExpander = new TimeWindowExpander();
+  const windowExpander = new TimeWindowExpander(domainRegistry);
 
   const runnable = calls.filter((call) => {
     const tool = toolMap.get(call.name);

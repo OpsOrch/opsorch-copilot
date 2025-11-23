@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { TimeWindowExpander } from '../src/engine/timeWindowExpander.js';
+import { domainRegistry } from '../src/engine/domainRegistry.js';
 import { ToolResult } from '../src/types.js';
 
 test('TimeWindowExpander: detects empty array result', () => {
-  const expander = new TimeWindowExpander();
+  const expander = new TimeWindowExpander(domainRegistry);
   const result: ToolResult = {
     name: 'query-logs',
     result: [],
@@ -14,7 +15,7 @@ test('TimeWindowExpander: detects empty array result', () => {
 });
 
 test('TimeWindowExpander: detects empty entries', () => {
-  const expander = new TimeWindowExpander();
+  const expander = new TimeWindowExpander(domainRegistry);
   const result: ToolResult = {
     name: 'query-logs',
     result: { entries: [] },
@@ -24,7 +25,7 @@ test('TimeWindowExpander: detects empty entries', () => {
 });
 
 test('TimeWindowExpander: detects empty series', () => {
-  const expander = new TimeWindowExpander();
+  const expander = new TimeWindowExpander(domainRegistry);
   const result: ToolResult = {
     name: 'query-metrics',
     result: { series: [] },
@@ -34,7 +35,7 @@ test('TimeWindowExpander: detects empty series', () => {
 });
 
 test('TimeWindowExpander: detects count = 0', () => {
-  const expander = new TimeWindowExpander();
+  const expander = new TimeWindowExpander(domainRegistry);
   const result: ToolResult = {
     name: 'query-logs',
     result: { count: 0, entries: [] },
@@ -44,7 +45,7 @@ test('TimeWindowExpander: detects count = 0', () => {
 });
 
 test('TimeWindowExpander: recognizes non-empty result', () => {
-  const expander = new TimeWindowExpander();
+  const expander = new TimeWindowExpander(domainRegistry);
   const result: ToolResult = {
     name: 'query-logs',
     result: { entries: [{ message: 'error' }] },
@@ -54,7 +55,7 @@ test('TimeWindowExpander: recognizes non-empty result', () => {
 });
 
 test('TimeWindowExpander: expands window by 2x', () => {
-  const expander = new TimeWindowExpander();
+  const expander = new TimeWindowExpander(domainRegistry);
   const window = {
     start: '2024-01-01T10:00:00Z',
     end: '2024-01-01T11:00:00Z', // 1 hour
@@ -71,7 +72,7 @@ test('TimeWindowExpander: expands window by 2x', () => {
 });
 
 test('TimeWindowExpander: caps window at 24 hours', () => {
-  const expander = new TimeWindowExpander();
+  const expander = new TimeWindowExpander(domainRegistry);
   const window = {
     start: '2024-01-01T00:00:00Z',
     end: '2024-01-01T12:00:00Z', // 12 hours
@@ -87,7 +88,7 @@ test('TimeWindowExpander: caps window at 24 hours', () => {
 });
 
 test('TimeWindowExpander: calculates window duration', () => {
-  const expander = new TimeWindowExpander();
+  const expander = new TimeWindowExpander(domainRegistry);
   const window = {
     start: '2024-01-01T10:00:00Z',
     end: '2024-01-01T13:00:00Z', // 3 hours
@@ -99,7 +100,7 @@ test('TimeWindowExpander: calculates window duration', () => {
 });
 
 test('TimeWindowExpander: handles invalid window gracefully', () => {
-  const expander = new TimeWindowExpander();
+  const expander = new TimeWindowExpander(domainRegistry);
   const window = {
     start: 'invalid',
     end: 'invalid',

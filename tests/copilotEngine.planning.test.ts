@@ -1,3 +1,4 @@
+import './setup.js'; // Load domain configurations
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { LlmClient, LlmMessage, Tool, ToolCall } from '../src/types.js';
@@ -389,8 +390,8 @@ test('defers to LLM plan even when heuristics might inject', async () => {
   const llm: LlmClient = {
     async chat(_messages: LlmMessage[] = [], tools: Tool[] = [], _opts?: { chatId?: string }) {
       if (tools.length) {
-        // LLM provides a valid plan (health check)
-        return { content: 'plan', toolCalls: [{ name: 'health', arguments: {} }], chatId: 'conv-defer-plan' };
+        // LLM provides a valid plan (list services)
+        return { content: 'plan', toolCalls: [{ name: 'list-services', arguments: {} }], chatId: 'conv-defer-plan' };
       }
       return { content: JSON.stringify({ conclusion: 'done' }), toolCalls: [], chatId: 'conv-defer-plan' };
     },
@@ -399,7 +400,7 @@ test('defers to LLM plan even when heuristics might inject', async () => {
   const calls: ToolCall[] = [];
   const mcp: StubMcp = {
     async listTools() {
-      return [{ name: 'health' } as Tool, { name: 'query-incidents' } as Tool];
+      return [{ name: 'list-services' } as Tool, { name: 'query-incidents' } as Tool];
     },
     async callTool(call) {
       calls.push(call);
@@ -413,7 +414,43 @@ test('defers to LLM plan even when heuristics might inject', async () => {
   // With conservative heuristics, we trust the LLM's plan
   // Even though question mentions SEV1, heuristics defer to LLM choice
   assert.equal(calls.length, 1);
-  assert.equal(calls[0]?.name, 'health', 'Should execute LLM\'s chosen tool');
+  assert.equal(calls[0]?.name, 'list-services', 'Should execute LLM\'s chosen tool');
+});
+
+test('filters out internal diagnostic tools from LLM visibility', async () => {
+  let toolsSeenByLLM: Tool[] = [];
+
+  const llm: LlmClient = {
+    async chat(_messages: LlmMessage[] = [], tools: Tool[] = [], _opts?: { chatId?: string }) {
+      if (tools.length) {
+        toolsSeenByLLM = tools;
+        // LLM returns a plan using available tools
+        return { content: 'plan', toolCalls: [{ name: 'query-incidents', arguments: {} }], chatId: 'conv-filter' };
+      }
+      return { content: JSON.stringify({ conclusion: 'done' }), toolCalls: [], chatId: 'conv-filter' };
+    },
+  };
+
+  const mcp: StubMcp = {
+    async listTools() {
+      // MCP provides both health and query-incidents
+      return [
+        { name: 'health' } as Tool,
+        { name: 'query-incidents' } as Tool
+      ];
+    },
+    async callTool(call) {
+      return { name: call.name, result: { ok: true } };
+    },
+  };
+
+  const engine = makeEngine(llm, mcp);
+  await engine.answer('show incidents');
+
+  // Verify that health tool was filtered out
+  const toolNames = toolsSeenByLLM.map(t => t.name);
+  assert.ok(!toolNames.includes('health'), 'health tool should be filtered from LLM visibility');
+  assert.ok(toolNames.includes('query-incidents'), 'other tools should remain visible');
 });
 
 test('adds default logs and metrics calls when user explicitly asks for them', async () => {
@@ -444,9 +481,13 @@ test('adds default logs and metrics calls when user explicitly asks for them', a
   console.log('Calls length:', calls.length);
   console.log('Calls:', calls.map(c => c.name));
   assert.equal(calls.length, 2);
-  assert.equal(calls[0]?.name, 'query-logs');
-  assert.ok(((calls[0]?.arguments as any).query as string).includes('504'));
-  assert.ok(typeof (calls[0]?.arguments as any).start === 'string');
-  assert.equal(calls[1]?.name, 'query-metrics');
-  assert.equal((calls[1]?.arguments as any).step, 60);
+  const toolNames = calls.map(c => c.name).sort();
+  assert.deepEqual(toolNames, ['query-logs', 'query-metrics']);
+
+  const logsCall = calls.find(c => c.name === 'query-logs');
+  const metricsCall = calls.find(c => c.name === 'query-metrics');
+
+  assert.ok(((logsCall?.arguments as any).query as string).includes('504'));
+  assert.ok(typeof (logsCall?.arguments as any).start === 'string');
+  assert.equal((metricsCall?.arguments as any).step, 60);
 });

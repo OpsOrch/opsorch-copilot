@@ -1,10 +1,12 @@
+import './setup.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { CorrelationDetector, CorrelationEvent } from '../src/engine/correlationDetector.js';
+import { domainRegistry } from '../src/engine/domainRegistry.js';
 import { ToolResult } from '../src/types.js';
 
 test('CorrelationDetector: extracts events from tool results', () => {
-  const detector = new CorrelationDetector();
+  const detector = new CorrelationDetector(domainRegistry);
   const results: ToolResult[] = [
     {
       name: 'query-logs',
@@ -27,7 +29,7 @@ test('CorrelationDetector: extracts events from tool results', () => {
 });
 
 test('CorrelationDetector: detects correlations between events', () => {
-  const detector = new CorrelationDetector();
+  const detector = new CorrelationDetector(domainRegistry);
   const events: CorrelationEvent[] = [
     {
       timestamp: '2024-01-01T10:00:00Z',
@@ -51,7 +53,7 @@ test('CorrelationDetector: detects correlations between events', () => {
 });
 
 test('CorrelationDetector: identifies root cause', () => {
-  const detector = new CorrelationDetector();
+  const detector = new CorrelationDetector(domainRegistry);
   const events: CorrelationEvent[] = [
     {
       timestamp: '2024-01-01T10:00:00Z',
@@ -73,14 +75,14 @@ test('CorrelationDetector: identifies root cause', () => {
 });
 
 test('CorrelationDetector: handles empty results', () => {
-  const detector = new CorrelationDetector();
+  const detector = new CorrelationDetector(domainRegistry);
   const events = detector.extractEvents([]);
 
   assert.equal(events.length, 0);
 });
 
 test('CorrelationDetector: sorts events by timestamp', () => {
-  const detector = new CorrelationDetector();
+  const detector = new CorrelationDetector(domainRegistry);
   const results: ToolResult[] = [
     {
       name: 'get-incident-timeline',

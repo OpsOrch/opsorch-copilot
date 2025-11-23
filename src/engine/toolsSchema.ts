@@ -1,13 +1,43 @@
 import { Tool, ToolCall, JsonObject } from '../types.js';
+import { isValidISO8601 } from './timestampUtils.js';
 
 export type ValidationResult = {
   valid: boolean;
   errors: string[];
   warnings: string[]; // Non-blocking suggestions
+  cleanedArguments?: JsonObject; // Arguments with null/undefined fields removed
 };
 
 /**
+ * Recursively strip null and undefined values from an object.
+ * This allows the LLM to pass null for optional parameters without validation errors.
+ */
+function stripNullFields(obj: any): any {
+  if (obj === null || obj === undefined) {
+    return undefined;
+  }
+
+  if (Array.isArray(obj)) {
+    return obj.map(stripNullFields).filter(item => item !== undefined);
+  }
+
+  if (typeof obj === 'object') {
+    const cleaned: any = {};
+    for (const [key, value] of Object.entries(obj)) {
+      const cleanedValue = stripNullFields(value);
+      if (cleanedValue !== undefined) {
+        cleaned[key] = cleanedValue;
+      }
+    }
+    return cleaned;
+  }
+
+  return obj;
+}
+
+/**
  * Validate a tool call against its schema.
+ * Note: This function will strip null/undefined fields from arguments before validation.
  */
 export function validateToolCall(call: ToolCall, tool: Tool): ValidationResult {
   const errors: string[] = [];
@@ -18,13 +48,15 @@ export function validateToolCall(call: ToolCall, tool: Tool): ValidationResult {
     return { valid: true, errors: [], warnings: [] }; // No schema = no validation
   }
 
-  const args = (call.arguments || {}) as Record<string, any>;
+  // Strip null/undefined fields from arguments
+  const rawArgs = (call.arguments || {}) as Record<string, any>;
+  const cleanedArgs = stripNullFields(rawArgs) as Record<string, any>;
   const schemaObj = schema as any;
 
   // Check required fields
   const required = Array.isArray(schemaObj.required) ? schemaObj.required as string[] : [];
   for (const field of required) {
-    const value = args[field];
+    const value = cleanedArgs[field];
     if (value === undefined || value === null) {
       errors.push(getRequiredFieldError(call.name, field));
     } else if (typeof value === 'string' && !value.trim()) {
@@ -35,7 +67,7 @@ export function validateToolCall(call: ToolCall, tool: Tool): ValidationResult {
   // Validate types if properties defined
   const properties = schemaObj.properties as Record<string, any> | undefined;
   if (properties) {
-    for (const [key, value] of Object.entries(args)) {
+    for (const [key, value] of Object.entries(cleanedArgs)) {
       const propSchema = properties[key];
       if (!propSchema) continue; // Unknown property, skip
 
@@ -106,7 +138,7 @@ export function validateToolCall(call: ToolCall, tool: Tool): ValidationResult {
   }
 
   // Common validation rules
-  const commonValidation = validateCommonPatterns(call.name, args);
+  const commonValidation = validateCommonPatterns(call.name, cleanedArgs);
   errors.push(...commonValidation.errors);
   warnings.push(...commonValidation.warnings);
 
@@ -114,6 +146,7 @@ export function validateToolCall(call: ToolCall, tool: Tool): ValidationResult {
     valid: errors.length === 0,
     errors,
     warnings,
+    cleanedArguments: cleanedArgs,
   };
 }
 
@@ -216,22 +249,6 @@ function validateCommonPatterns(toolName: string, args: Record<string, any>): Va
   }
 
   return { valid: errors.length === 0, errors, warnings };
-}
-
-/**
- * Check if string is valid ISO 8601 timestamp
- */
-function isValidISO8601(value: string): boolean {
-  if (typeof value !== 'string') return false;
-
-  // Basic format check
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(value)) {
-    return false;
-  }
-
-  // Try parsing
-  const date = new Date(value);
-  return !isNaN(date.getTime());
 }
 
 /**

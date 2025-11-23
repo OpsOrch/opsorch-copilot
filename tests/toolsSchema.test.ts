@@ -403,5 +403,52 @@ test('validateToolCall provides contextual error messages', () => {
     assert.ok(result.errors.some(e => e.includes('60 for 1-minute')));
 });
 
+test('validateToolCall strips null fields from arguments', () => {
+    const tool: Tool = {
+        name: 'query-incidents',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                query: { type: 'string' },
+                statuses: { type: 'array' },
+                scope: { type: 'object' },
+                limit: { type: 'number' },
+            },
+        },
+    };
+
+    const call: ToolCall = {
+        name: 'query-incidents',
+        arguments: {
+            query: null,
+            statuses: null,
+            scope: {
+                service: 'svc-checkout',
+                team: null,
+                environment: 'prod',
+            },
+            limit: 10,
+        },
+    };
+
+    const result = validateToolCall(call, tool);
+
+    // Should be valid since null fields are stripped
+    assert.equal(result.valid, true);
+    assert.equal(result.errors.length, 0);
+
+    // Should return cleaned arguments
+    assert.ok(result.cleanedArguments);
+    assert.equal(result.cleanedArguments.query, undefined);  // Null stripped
+    assert.equal(result.cleanedArguments.statuses, undefined);  // Null stripped
+    assert.equal(result.cleanedArguments.limit, 10);  // Preserved
+
+    // Nested null fields should also be stripped
+    const scope = result.cleanedArguments.scope as any;
+    assert.equal(scope.service, 'svc-checkout');
+    assert.equal(scope.team, undefined);  // Null stripped from nested object
+    assert.equal(scope.environment, 'prod');
+});
+
 
 

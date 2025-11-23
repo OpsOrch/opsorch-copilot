@@ -1,5 +1,7 @@
 import { ToolCall, ToolResult } from '../types.js';
 import { McpClient } from '../mcpClient.js';
+import { DomainRegistry } from './domainRegistry.js';
+import { isValidISODate, getTimestampMs, calculateDurationMs } from './timestampUtils.js';
 
 /**
  * Represents a time window for queries
@@ -27,6 +29,8 @@ const DEFAULT_EXPANSION_FACTOR = 2;
  * This helps avoid missing relevant data due to overly narrow time ranges.
  */
 export class TimeWindowExpander {
+  constructor(private registry: DomainRegistry) { }
+
   /**
    * Check if a tool result is empty
    */
@@ -79,21 +83,21 @@ export class TimeWindowExpander {
   }
 
   /**
-   * Expand time window by a factor
+   * Expand time window by a factor (for retry scenarios)
    */
   expandWindow(
     window: TimeWindow,
     factor: number = DEFAULT_EXPANSION_FACTOR
   ): TimeWindow {
     try {
-      const startMs = new Date(window.start).getTime();
-      const endMs = new Date(window.end).getTime();
+      const startMs = getTimestampMs(window.start);
+      const endMs = getTimestampMs(window.end);
 
       if (isNaN(startMs) || isNaN(endMs)) {
         throw new Error('Invalid time window');
       }
 
-      const durationMs = endMs - startMs;
+      const durationMs = calculateDurationMs(window.start, window.end);
       const expansionMs = durationMs * (factor - 1) / 2; // Expand equally on both sides
 
       let newStartMs = startMs - expansionMs;
@@ -118,6 +122,48 @@ export class TimeWindowExpander {
       // If expansion fails, return original window
       return window;
     }
+  }
+
+  /**
+   * Expand time window with padding (for follow-up scenarios)
+   * Uses domain configuration for padding and default duration
+   */
+  expandWindowByPadding(
+    start: string | undefined,
+    end: string | undefined,
+    paddingMinutes: number = 15,
+    defaultDurationMinutes: number = 60
+  ): { start: string; end: string } | undefined {
+    const paddingMs = paddingMinutes * 60 * 1000;
+    const defaultDurationMs = defaultDurationMinutes * 60 * 1000;
+
+    const startMs = start ? Date.parse(start) : undefined;
+    const endMs = end ? Date.parse(end) : undefined;
+
+    const startValid = startMs && !isNaN(startMs);
+    const endValid = endMs && !isNaN(endMs);
+
+    if (!startValid && !endValid) {
+      return undefined;
+    }
+
+    const fallbackNow = Date.now();
+    let expandedStart = startValid ? startMs! : endValid ? endMs! - defaultDurationMs : fallbackNow - defaultDurationMs;
+    let expandedEnd = endValid ? endMs! : expandedStart + defaultDurationMs;
+
+    // Apply padding
+    expandedStart -= paddingMs;
+    expandedEnd += paddingMs;
+
+    // Ensure end is after start
+    if (expandedStart >= expandedEnd) {
+      expandedEnd = expandedStart + paddingMs;
+    }
+
+    return {
+      start: new Date(expandedStart).toISOString(),
+      end: new Date(expandedEnd).toISOString()
+    };
   }
 
   /**
@@ -217,10 +263,11 @@ export class TimeWindowExpander {
   }
 
   /**
-   * Check if a tool call is time-based (logs or metrics)
+   * Check if a tool call supports time windows using domain configuration
    */
   private isTimeBasedQuery(call: ToolCall): boolean {
-    return call.name === 'query-logs' || call.name === 'query-metrics';
+    const domain = this.registry.getDomainForTool(call.name);
+    return !!domain?.followUp?.timeWindow;
   }
 
   /**
@@ -239,8 +286,8 @@ export class TimeWindowExpander {
     if (
       typeof start === 'string' &&
       typeof end === 'string' &&
-      this.isValidISODate(start) &&
-      this.isValidISODate(end)
+      isValidISODate(start) &&
+      isValidISODate(end)
     ) {
       return { start, end };
     }
@@ -249,21 +296,11 @@ export class TimeWindowExpander {
   }
 
   /**
-   * Validate ISO date string
-   */
-  private isValidISODate(dateString: string): boolean {
-    const date = new Date(dateString);
-    return !isNaN(date.getTime()) && dateString.includes('T');
-  }
-
-  /**
    * Calculate window duration in hours
    */
   getWindowDurationHours(window: TimeWindow): number {
     try {
-      const startMs = new Date(window.start).getTime();
-      const endMs = new Date(window.end).getTime();
-      const durationMs = endMs - startMs;
+      const durationMs = calculateDurationMs(window.start, window.end);
       return durationMs / (60 * 60 * 1000);
     } catch {
       return 0;

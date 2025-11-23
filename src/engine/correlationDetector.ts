@@ -1,4 +1,8 @@
 import { ToolResult } from '../types.js';
+import { DomainRegistry } from './domainRegistry.js';
+import { isValidTimestamp, normalizeTimestamp, getTimestampMs } from './timestampUtils.js';
+
+const DEFAULT_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
  * Represents an event extracted from tool results
@@ -8,7 +12,16 @@ export interface CorrelationEvent {
   source: 'metric' | 'log' | 'incident';
   type: string; // e.g., 'cpu_spike', 'error_burst', 'severity_change'
   value?: number;
-  metadata?: Record<string, any>;
+  metadata?: any;
+}
+
+/**
+ * Represents a group of correlated events
+ */
+export interface CorrelationGroup {
+  timeWindow: string;
+  events: CorrelationEvent[];
+  strength: number;
 }
 
 /**
@@ -30,37 +43,34 @@ const MODERATE_CORRELATION_THRESHOLD = 0.5;
  * to help identify root causes and related issues.
  */
 export class CorrelationDetector {
+  constructor(private registry: DomainRegistry) { }
+
   /**
-   * Extract events from tool results
+   * Extract events from tool results using domain registry to categorize tools
    */
   extractEvents(results: ToolResult[]): CorrelationEvent[] {
     const events: CorrelationEvent[] = [];
 
     for (const result of results) {
-      // Extract metric events
-      if (result.name === 'query-metrics') {
+      // Get domain for this tool
+      const domain = this.registry.getDomainForTool(result.name);
+
+      if (!domain) continue;
+
+      // Route to appropriate extractor based on domain name
+      if (domain.name === 'metric') {
         events.push(...this.extractMetricEvents(result));
-      }
-
-      // Extract log events
-      if (result.name === 'query-logs') {
+      } else if (domain.name === 'log') {
         events.push(...this.extractLogEvents(result));
-      }
-
-      // Extract incident events
-      if (
-        result.name === 'query-incidents' ||
-        result.name === 'get-incident' ||
-        result.name === 'get-incident-timeline'
-      ) {
+      } else if (domain.name === 'incident') {
         events.push(...this.extractIncidentEvents(result));
       }
     }
 
     // Sort events by timestamp
     events.sort((a, b) => {
-      const timeA = new Date(a.timestamp).getTime();
-      const timeB = new Date(b.timestamp).getTime();
+      const timeA = getTimestampMs(a.timestamp);
+      const timeB = getTimestampMs(b.timestamp);
       return timeA - timeB;
     });
 
@@ -79,11 +89,11 @@ export class CorrelationDetector {
     // Look for events that occur close together in time
     for (let i = 0; i < events.length; i++) {
       const event1 = events[i];
-      const time1 = new Date(event1.timestamp).getTime();
+      const time1 = getTimestampMs(event1.timestamp);
 
       for (let j = i + 1; j < events.length; j++) {
         const event2 = events[j];
-        const time2 = new Date(event2.timestamp).getTime();
+        const time2 = getTimestampMs(event2.timestamp);
         const timeDelta = Math.abs(time2 - time1);
 
         // Stop looking if events are too far apart
@@ -135,8 +145,8 @@ export class CorrelationDetector {
 
     // Return the earliest event in the correlation
     const sortedEvents = [...strongest.events].sort((a, b) => {
-      const timeA = new Date(a.timestamp).getTime();
-      const timeB = new Date(b.timestamp).getTime();
+      const timeA = getTimestampMs(a.timestamp);
+      const timeB = getTimestampMs(b.timestamp);
       return timeA - timeB;
     });
 
@@ -168,11 +178,11 @@ export class CorrelationDetector {
             const value = Array.isArray(values[i]) ? values[i][1] : values[i];
             const timestamp = timestamps[i] || values[i]?.[0];
 
-            if (timestamp && this.isValidTimestamp(timestamp)) {
+            if (timestamp && isValidTimestamp(timestamp)) {
               // Detect spikes or anomalies
               if (typeof value === 'number' && this.isAnomaly(value, values)) {
                 events.push({
-                  timestamp: this.normalizeTimestamp(timestamp),
+                  timestamp: normalizeTimestamp(timestamp),
                   source: 'metric',
                   type: value > 0 ? 'metric_spike' : 'metric_drop',
                   value,
@@ -210,8 +220,8 @@ export class CorrelationDetector {
           const timestamp =
             entry.timestamp || entry.time || entry['@timestamp'];
 
-          if (timestamp && this.isValidTimestamp(timestamp)) {
-            const normalizedTime = this.normalizeTimestamp(timestamp);
+          if (timestamp && isValidTimestamp(timestamp)) {
+            const normalizedTime = normalizeTimestamp(timestamp);
             const timeWindow = this.getTimeWindow(normalizedTime, 60000); // 1-minute windows
 
             // Count errors in this window
@@ -249,8 +259,12 @@ export class CorrelationDetector {
       return events;
     }
 
+    // Check if this is a timeline tool using domain config
+    const domain = this.registry.getDomainForTool(result.name);
+    const isTimelineTool = domain?.name === 'incident' && result.name.includes('timeline');
+
     // Handle timeline events
-    if (result.name === 'get-incident-timeline') {
+    if (isTimelineTool) {
       const timelineEvents = this.findArray(payload, ['events', 'timeline']);
 
       if (timelineEvents && Array.isArray(timelineEvents)) {
@@ -259,7 +273,7 @@ export class CorrelationDetector {
             const timestamp = event.timestamp || event.at || event.time;
             const kind = event.kind || event.type;
 
-            if (timestamp && this.isValidTimestamp(timestamp)) {
+            if (timestamp && isValidTimestamp(timestamp)) {
               // Look for significant events
               if (
                 kind === 'severity_change' ||
@@ -267,7 +281,7 @@ export class CorrelationDetector {
                 kind === 'deploy'
               ) {
                 events.push({
-                  timestamp: this.normalizeTimestamp(timestamp),
+                  timestamp: normalizeTimestamp(timestamp),
                   source: 'incident',
                   type: kind,
                   metadata: event,
@@ -287,9 +301,9 @@ export class CorrelationDetector {
           const startTime =
             incident.startTime || incident.start || incident.createdAt;
 
-          if (startTime && this.isValidTimestamp(startTime)) {
+          if (startTime && isValidTimestamp(startTime)) {
             events.push({
-              timestamp: this.normalizeTimestamp(startTime),
+              timestamp: normalizeTimestamp(startTime),
               source: 'incident',
               type: 'incident_created',
               metadata: { id: incident.id, severity: incident.severity },
@@ -373,34 +387,7 @@ export class CorrelationDetector {
     return null;
   }
 
-  /**
-   * Helper: Check if value is a valid timestamp
-   */
-  private isValidTimestamp(value: any): boolean {
-    if (typeof value === 'string') {
-      return /\d{4}-\d{2}-\d{2}T/.test(value);
-    }
-    if (typeof value === 'number') {
-      // Unix timestamp (seconds or milliseconds)
-      return value > 1000000000 && value < 9999999999999;
-    }
-    return false;
-  }
 
-  /**
-   * Helper: Normalize timestamp to ISO string
-   */
-  private normalizeTimestamp(value: any): string {
-    if (typeof value === 'string') {
-      return value;
-    }
-    if (typeof value === 'number') {
-      // Convert to milliseconds if needed
-      const ms = value < 10000000000 ? value * 1000 : value;
-      return new Date(ms).toISOString();
-    }
-    return new Date().toISOString();
-  }
 
   /**
    * Helper: Get time window for grouping

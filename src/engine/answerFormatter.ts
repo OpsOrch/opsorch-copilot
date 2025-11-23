@@ -1,5 +1,6 @@
 import { CopilotAnswer, ToolResult } from '../types.js';
-import { buildReferences } from './references.js';
+import { buildReferences } from './referenceBuilder.js';
+import { domainRegistry } from './domainRegistry.js';
 
 /**
  * Format evidence string with truncation for readability.
@@ -46,7 +47,7 @@ export function formatAnswer(
     throw new Error('question is required and must be a string');
   }
 
-  const references = buildReferences(results);
+  const references = buildReferences(results, domainRegistry);
 
   // Handle empty results
   if (!results.length) {

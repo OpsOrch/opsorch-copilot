@@ -8,6 +8,7 @@ import {
   Tool,
   ToolCall,
 } from '../types.js';
+import { withRetry } from '../engine/retryStrategy.js';
 
 const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5.1';
@@ -269,23 +270,40 @@ export class OpenAiLlm implements LlmClient {
     }));
 
     try {
-      const res = await fetch(RESPONSES_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${this.apiKey}`,
+      const res = await withRetry(
+        async () => {
+          const response = await fetch(RESPONSES_URL, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${this.apiKey}`,
+            },
+            body: JSON.stringify(body),
+          });
+
+          if (!response.ok) {
+            const text = await response.text();
+            console.error(`[OpenAI] API error ${response.status}`);
+            console.error(`[OpenAI] Error details:`, text);
+
+            // Throw for retryable errors (rate limits, 5xx)
+            if (response.status === 429 || response.status >= 500) {
+              throw new Error(`OpenAI API error ${response.status}: ${text}`);
+            }
+
+            // Don't retry for 4xx errors (except 429)
+            console.warn('[OpenAI] Non-retryable error, returning empty response');
+            return null; // Signal non-retryable error
+          }
+
+          return response;
         },
-        body: JSON.stringify(body),
-      });
+        { maxRetries: 3, baseDelayMs: 1000 },
+        'llm-openai'
+      );
 
-      if (!res.ok) {
-        const text = await res.text();
-        console.error(`[OpenAI] API error ${res.status}`);
-        console.error(`[OpenAI] Error details:`, text);
-
-        // Don't throw - return empty response to allow graceful fallback
-        // The planner/synthesis will handle empty responses appropriately
-        console.warn('[OpenAI] Returning empty response to trigger fallback mechanisms');
+      // Handle non-retryable error
+      if (res === null) {
         return {
           content: '',
           toolCalls: [],

@@ -1,4 +1,6 @@
 import { ToolResult, MetricSeries, Anomaly, Trend } from '../types.js';
+import { DomainRegistry } from './domainRegistry.js';
+import { isValidTimestamp, normalizeTimestamp } from './timestampUtils.js';
 
 const OUTLIER_THRESHOLD = 2; // Standard deviations
 const SPIKE_THRESHOLD = 0.5; // 50% increase
@@ -10,14 +12,18 @@ const TREND_MIN_POINTS = 3;
  * to help the LLM focus on significant patterns rather than raw data analysis.
  */
 export class AnomalyDetector {
+  constructor(private registry: DomainRegistry) { }
+
   /**
-   * Extract metric series from tool results
+   * Extract metric series from tool results using domain registry
    */
   extractMetricSeries(results: ToolResult[]): MetricSeries[] {
     const series: MetricSeries[] = [];
 
     for (const result of results) {
-      if (result.name === 'query-metrics') {
+      // Check if tool belongs to metric domain
+      const domain = this.registry.getDomainForTool(result.name);
+      if (domain?.name === 'metric') {
         series.push(...this.parseMetricResult(result));
       }
     }
@@ -36,11 +42,11 @@ export class AnomalyDetector {
     }
 
     const stats = this.calculateStatistics(series.values);
-    
+
     for (let i = 0; i < series.values.length; i++) {
       const value = series.values[i];
       const timestamp = series.timestamps[i];
-      
+
       if (!timestamp) continue;
 
       const deviationFromMean = Math.abs(value - stats.mean);
@@ -48,7 +54,7 @@ export class AnomalyDetector {
 
       if (isOutlier) {
         const severity = this.calculateSeverity(deviationFromMean, stats.stdDev);
-        
+
         anomalies.push({
           timestamp,
           value,
@@ -65,7 +71,7 @@ export class AnomalyDetector {
 
         if (changeRatio > SPIKE_THRESHOLD && value > prevValue) {
           const severity = changeRatio > 1.0 ? 'high' : changeRatio > 0.8 ? 'medium' : 'low';
-          
+
           anomalies.push({
             timestamp,
             value,
@@ -76,7 +82,7 @@ export class AnomalyDetector {
           });
         } else if (changeRatio > DROP_THRESHOLD && value < prevValue) {
           const severity = changeRatio > 1.0 ? 'high' : changeRatio > 0.8 ? 'medium' : 'low';
-          
+
           anomalies.push({
             timestamp,
             value,
@@ -93,7 +99,7 @@ export class AnomalyDetector {
       const severityOrder = { high: 3, medium: 2, low: 1 };
       const severityDiff = severityOrder[b.severity] - severityOrder[a.severity];
       if (severityDiff !== 0) return severityDiff;
-      
+
       return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
     });
 
@@ -115,7 +121,7 @@ export class AnomalyDetector {
 
     if (confidence > 0.6) {
       let direction: Trend['direction'];
-      
+
       if (Math.abs(slope) < 0.01) {
         direction = 'stable';
       } else if (slope > 0) {
@@ -148,7 +154,7 @@ export class AnomalyDetector {
     for (const series of seriesList) {
       const service = series.service || 'unknown';
       const anomalies = this.detectAnomalies(series);
-      
+
       let score = 0;
       for (const anomaly of anomalies) {
         switch (anomaly.severity) {
@@ -178,7 +184,7 @@ export class AnomalyDetector {
     }
 
     const data = this.findMetricData(payload);
-    
+
     if (data && Array.isArray(data)) {
       for (const item of data) {
         if (typeof item === 'object' && item !== null) {
@@ -195,7 +201,7 @@ export class AnomalyDetector {
 
   private findMetricData(payload: any): any[] | null {
     const fields = ['series', 'data', 'results', 'metrics', 'values'];
-    
+
     for (const field of fields) {
       if (payload[field] && Array.isArray(payload[field])) {
         return payload[field];
@@ -217,8 +223,8 @@ export class AnomalyDetector {
       for (const point of item.values) {
         if (Array.isArray(point) && point.length >= 2) {
           const [ts, val] = point;
-          if (this.isValidTimestamp(ts) && typeof val === 'number') {
-            timestamps.push(this.normalizeTimestamp(ts));
+          if (isValidTimestamp(ts) && typeof val === 'number') {
+            timestamps.push(normalizeTimestamp(ts));
             values.push(val);
           }
         }
@@ -227,8 +233,8 @@ export class AnomalyDetector {
       for (const point of item.datapoints) {
         if (Array.isArray(point) && point.length >= 2) {
           const [val, ts] = point;
-          if (typeof val === 'number' && this.isValidTimestamp(ts)) {
-            timestamps.push(this.normalizeTimestamp(ts));
+          if (typeof val === 'number' && isValidTimestamp(ts)) {
+            timestamps.push(normalizeTimestamp(ts));
             values.push(val);
           }
         }
@@ -236,10 +242,10 @@ export class AnomalyDetector {
     } else if (item.timestamps && item.data) {
       const ts = Array.isArray(item.timestamps) ? item.timestamps : [];
       const vals = Array.isArray(item.data) ? item.data : [];
-      
+
       for (let i = 0; i < Math.min(ts.length, vals.length); i++) {
-        if (this.isValidTimestamp(ts[i]) && typeof vals[i] === 'number') {
-          timestamps.push(this.normalizeTimestamp(ts[i]));
+        if (isValidTimestamp(ts[i]) && typeof vals[i] === 'number') {
+          timestamps.push(normalizeTimestamp(ts[i]));
           values.push(vals[i]);
         }
       }
@@ -274,7 +280,7 @@ export class AnomalyDetector {
 
   private calculateSeverity(deviation: number, stdDev: number): Anomaly['severity'] {
     const deviationRatio = deviation / stdDev;
-    
+
     if (deviationRatio > 3) return 'high';
     if (deviationRatio > 2.5) return 'medium';
     return 'low';
@@ -306,26 +312,5 @@ export class AnomalyDetector {
 
     const rSquared = 1 - (residualSumSquares / totalSumSquares);
     return Math.max(0, Math.min(1, rSquared));
-  }
-
-  private isValidTimestamp(value: any): boolean {
-    if (typeof value === 'string') {
-      return /\d{4}-\d{2}-\d{2}T/.test(value);
-    }
-    if (typeof value === 'number') {
-      return value > 1000000000 && value < 9999999999999;
-    }
-    return false;
-  }
-
-  private normalizeTimestamp(value: any): string {
-    if (typeof value === 'string') {
-      return value;
-    }
-    if (typeof value === 'number') {
-      const ms = value < 10000000000 ? value * 1000 : value;
-      return new Date(ms).toISOString();
-    }
-    return new Date().toISOString();
   }
 }

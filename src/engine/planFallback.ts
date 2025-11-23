@@ -1,5 +1,10 @@
 import { ToolCall } from '../types.js';
 
+/**
+ * Simple heuristic-based fallback plan when LLM planning fails.
+ * This is intentionally kept simple and doesn't use QueryBuilder
+ * since it's only used as a last resort fallback.
+ */
 export function inferPlanFromQuestion(question: string): ToolCall[] {
   const q = question.toLowerCase();
   const calls: ToolCall[] = [];

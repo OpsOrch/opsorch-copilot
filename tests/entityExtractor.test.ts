@@ -1,6 +1,7 @@
+import './setup.js'; // Load domains first
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { EntityExtractor, Entity, ConversationContext } from '../src/engine/entityExtractor.js';
+import { EntityExtractor, Entity } from '../src/engine/entityExtractor.js';
 import { ToolResult } from '../src/types.js';
 
 test('EntityExtractor: extracts incident IDs from tool results', () => {
@@ -92,149 +93,6 @@ test('EntityExtractor: extracts ticket IDs from tool results', () => {
   assert.ok(ticketEntities.some(e => e.value === 'TICKET-101'));
 });
 
-test('EntityExtractor: resolves "that incident" reference', () => {
-  const extractor = new EntityExtractor();
-  const context: ConversationContext = {
-    chatId: 'test-chat',
-    entities: new Map([
-      [
-        'incident',
-        [
-          {
-            type: 'incident',
-            value: 'INC-999',
-            extractedAt: Date.now(),
-            source: 'query-incidents',
-          },
-        ],
-      ],
-    ]),
-  };
-
-  const resolutions = extractor.resolveReference('What caused that incident?', context);
-
-  assert.ok(resolutions.has('that incident'));
-  assert.equal(resolutions.get('that incident'), 'INC-999');
-});
-
-test('EntityExtractor: resolves "this service" reference', () => {
-  const extractor = new EntityExtractor();
-  const context: ConversationContext = {
-    chatId: 'test-chat',
-    entities: new Map([
-      [
-        'service',
-        [
-          {
-            type: 'service',
-            value: 'payment-api',
-            extractedAt: Date.now(),
-            source: 'query-incidents',
-          },
-        ],
-      ],
-    ]),
-  };
-
-  const resolutions = extractor.resolveReference('Show me logs for this service', context);
-
-  assert.ok(resolutions.has('this service'));
-  assert.equal(resolutions.get('this service'), 'payment-api');
-});
-
-test('EntityExtractor: resolves "since then" time reference', () => {
-  const extractor = new EntityExtractor();
-  const baseTime = '2024-01-01T10:00:00Z';
-  const context: ConversationContext = {
-    chatId: 'test-chat',
-    entities: new Map([
-      [
-        'timestamp',
-        [
-          {
-            type: 'timestamp',
-            value: baseTime,
-            extractedAt: Date.now(),
-            source: 'get-incident-timeline',
-          },
-        ],
-      ],
-    ]),
-  };
-
-  const resolutions = extractor.resolveReference('What happened since then?', context);
-
-  assert.ok(resolutions.has('since then'));
-  assert.equal(resolutions.get('since then'), baseTime);
-});
-
-test('EntityExtractor: applies resolutions to question text', () => {
-  const extractor = new EntityExtractor();
-  const resolutions = new Map([
-    ['that incident', 'INC-123'],
-    ['this service', 'payment-api'],
-  ]);
-
-  const resolved = extractor.applyResolutions(
-    'What caused that incident in this service?',
-    resolutions
-  );
-
-  assert.equal(resolved, 'What caused INC-123 in payment-api?');
-});
-
-test('EntityExtractor: handles case-insensitive resolution', () => {
-  const extractor = new EntityExtractor();
-  const resolutions = new Map([['that incident', 'INC-123']]);
-
-  const resolved = extractor.applyResolutions('What caused THAT INCIDENT?', resolutions);
-
-  assert.equal(resolved, 'What caused INC-123?');
-});
-
-test('EntityExtractor: returns most recent entity when multiple exist', () => {
-  const extractor = new EntityExtractor();
-  const now = Date.now();
-  const context: ConversationContext = {
-    chatId: 'test-chat',
-    entities: new Map([
-      [
-        'incident',
-        [
-          {
-            type: 'incident',
-            value: 'INC-100',
-            extractedAt: now - 1000,
-            source: 'query-incidents',
-          },
-          {
-            type: 'incident',
-            value: 'INC-200',
-            extractedAt: now,
-            source: 'query-incidents',
-          },
-        ],
-      ],
-    ]),
-  };
-
-  const resolutions = extractor.resolveReference('Tell me about that incident', context);
-
-  assert.equal(resolutions.get('that incident'), 'INC-200');
-});
-
-test('EntityExtractor: handles empty context gracefully', () => {
-  const extractor = new EntityExtractor();
-  const context: ConversationContext = {
-    chatId: 'test-chat',
-    entities: new Map(),
-  };
-
-  const resolutions = extractor.resolveReference('What about that incident?', context);
-
-  assert.equal(resolutions.size, 0);
-});
-
 test('EntityExtractor: extracts entities from nested structures', () => {
   const extractor = new EntityExtractor();
   const results: ToolResult[] = [
@@ -304,9 +162,9 @@ test('EntityExtractor: recognizes various incident ID formats', () => {
   const extractor = new EntityExtractor();
   const results: ToolResult[] = [
     {
-      name: 'test',
+      name: 'query-incidents',
       result: {
-        items: [
+        incidents: [
           { id: 'INC-123' },
           { id: 'INCIDENT-456' },
           { id: 'inc_789' },
@@ -329,9 +187,9 @@ test('EntityExtractor: recognizes various ticket ID formats', () => {
   const extractor = new EntityExtractor();
   const results: ToolResult[] = [
     {
-      name: 'test',
+      name: 'query-tickets',
       result: {
-        items: [
+        tickets: [
           { id: 'JIRA-123' },
           { id: 'TICKET-456' },
           { id: 'TKT-789' },
@@ -346,38 +204,6 @@ test('EntityExtractor: recognizes various ticket ID formats', () => {
   assert.ok(ticketEntities.some(e => e.value === 'JIRA-123'));
   assert.ok(ticketEntities.some(e => e.value === 'TICKET-456'));
   assert.ok(ticketEntities.some(e => e.value === 'TKT-789'));
-});
-
-test('EntityExtractor: handles "before that" time reference', () => {
-  const extractor = new EntityExtractor();
-  const baseTime = '2024-01-01T10:00:00Z';
-  const context: ConversationContext = {
-    chatId: 'test-chat',
-    entities: new Map([
-      [
-        'timestamp',
-        [
-          {
-            type: 'timestamp',
-            value: baseTime,
-            extractedAt: Date.now(),
-            source: 'get-incident-timeline',
-          },
-        ],
-      ],
-    ]),
-  };
-
-  const resolutions = extractor.resolveReference('What happened before that?', context);
-
-  assert.ok(resolutions.has('before that'));
-  const resolvedTime = resolutions.get('before that');
-  assert.ok(resolvedTime);
-
-  // Should be 1 hour before base time
-  const baseMs = new Date(baseTime).getTime();
-  const resolvedMs = new Date(resolvedTime!).getTime();
-  assert.equal(baseMs - resolvedMs, 60 * 60 * 1000);
 });
 
 test('EntityExtractor: does not extract non-incident IDs', () => {
@@ -399,69 +225,6 @@ test('EntityExtractor: does not extract non-incident IDs', () => {
   const incidentEntities = entities.filter(e => e.type === 'incident');
 
   assert.equal(incidentEntities.length, 0);
-});
-
-test('EntityExtractor: handles multiple references in one question', () => {
-  const extractor = new EntityExtractor();
-  const context: ConversationContext = {
-    chatId: 'test-chat',
-    entities: new Map([
-      [
-        'incident',
-        [
-          {
-            type: 'incident',
-            value: 'INC-999',
-            extractedAt: Date.now(),
-            source: 'query-incidents',
-          },
-        ],
-      ],
-      [
-        'service',
-        [
-          {
-            type: 'service',
-            value: 'payment-api',
-            extractedAt: Date.now(),
-            source: 'list-services',
-          },
-        ],
-      ],
-    ]),
-  };
-
-  const resolutions = extractor.resolveReference(
-    'What caused this service failure for that incident?',
-    context
-  );
-
-  assert.ok(resolutions.size >= 2);
-  assert.equal(resolutions.get('this service'), 'payment-api');
-  assert.equal(resolutions.get('that incident'), 'INC-999');
-});
-
-test('EntityExtractor: uses prominence as tiebreaker when timestamps are equal', () => {
-  const extractor = new EntityExtractor();
-  const now = Date.now();
-  const context: ConversationContext = {
-    chatId: 'test-chat',
-    entities: new Map([
-      [
-        'incident',
-        [
-          { type: 'incident', value: 'inc-002', extractedAt: now, source: 'list-incidents', prominence: 0.1 },
-          { type: 'incident', value: 'inc-005', extractedAt: now, source: 'list-incidents', prominence: 0.9 },
-          { type: 'incident', value: 'inc-008', extractedAt: now, source: 'list-incidents', prominence: 0.3 },
-        ],
-      ],
-    ]),
-  };
-
-  const resolutions = extractor.resolveReference('tell me more about that incident', context);
-
-  assert.ok(resolutions.has('that incident'));
-  assert.equal(resolutions.get('that incident'), 'inc-005'); // Should pick highest prominence
 });
 
 test('EntityExtractor: extracts primary entities from conclusion', () => {
