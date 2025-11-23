@@ -194,3 +194,25 @@ export interface Trend {
   endTimestamp: string;
   metric: string;
 }
+
+// Search types
+export interface SearchOptions {
+  query: string;                    // Text to search for
+  limit?: number;                   // Max results (default: 50)
+}
+
+export interface SearchResult {
+  chatId: string;
+  name: string;
+  createdAt: number;
+  lastAccessedAt: number;
+  matchCount: number;               // Number of matching turns
+  matchingTurns: MatchingTurn[];    // Details of matches
+}
+
+export interface MatchingTurn {
+  turnIndex: number;                // Index in conversation.turns array
+  snippet: string;                  // Truncated preview (max 200 chars)
+  timestamp: number;
+  matchType: 'user' | 'assistant' | 'entity';
+}

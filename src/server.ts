@@ -70,6 +70,48 @@ function createApp(engineOverride?: CopilotEngine) {
     }
   });
 
+  app.get('/chats/search', async (req, res) => {
+    const query = req.query.query as string;
+    const limitStr = req.query.limit as string | undefined;
+
+    // Validate query parameter
+    if (!query || typeof query !== 'string' || query.trim().length === 0) {
+      res.status(400).json({ error: 'query parameter is required and must be non-empty' });
+      return;
+    }
+
+    // Parse and validate limit
+    let limit: number | undefined;
+    if (limitStr) {
+      limit = parseInt(limitStr, 10);
+      if (isNaN(limit) || limit < 0) {
+        res.status(400).json({ error: 'limit must be a non-negative number' });
+        return;
+      }
+    }
+
+    try {
+      const conversationManager = engine.getConversationManager();
+      const store = conversationManager.getStore();
+
+      const results = await store.search({
+        query: query.trim(),
+        limit
+      });
+
+      res.json({
+        query: query.trim(),
+        limit: limit || 50,
+        totalResults: results.length,
+        returnedResults: results.length,
+        results
+      });
+    } catch (err) {
+      console.error('search error', err);
+      res.status(500).json({ error: (err as Error).message });
+    }
+  });
+
   app.get('/chats/:id', async (req, res) => {
     const chatId = req.params.id;
 

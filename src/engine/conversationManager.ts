@@ -272,4 +272,12 @@ export class ConversationManager {
 
         return { chatId, entities: entityMap };
     }
+
+    /**
+     * Get the underlying conversation store.
+     * Useful for advanced operations like search.
+     */
+    getStore(): ConversationStore {
+        return this.store;
+    }
 }

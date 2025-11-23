@@ -8,8 +8,59 @@
 import Database from 'better-sqlite3';
 import { mkdirSync, existsSync } from 'fs';
 import { dirname } from 'path';
-import { Conversation, ConversationConfig } from '../types.js';
+import { Conversation, ConversationConfig, ConversationTurn, SearchOptions, SearchResult, MatchingTurn } from '../types.js';
 import { ConversationStore } from '../conversationStore.js';
+
+/**
+ * Create a snippet from a conversation turn.
+ * Truncates text to 200 characters maximum with ellipsis.
+ * Reused from InMemoryConversationStore.
+ */
+function createSnippet(
+    turn: ConversationTurn,
+    turnIndex: number,
+    matchType: 'user' | 'assistant' | 'entity',
+    query: string
+): MatchingTurn {
+    let text = '';
+    
+    if (matchType === 'user') {
+        text = turn.userMessage;
+    } else if (matchType === 'assistant' && turn.assistantResponse) {
+        text = turn.assistantResponse;
+    } else if (matchType === 'entity' && turn.entities) {
+        text = turn.entities.map(e => e.value).join(', ');
+    }
+    
+    const lowerText = text.toLowerCase();
+    const lowerQuery = query.toLowerCase();
+    const matchIndex = lowerText.indexOf(lowerQuery);
+    
+    let snippet = text;
+    
+    if (matchIndex !== -1 && text.length > 200) {
+        const start = Math.max(0, matchIndex - 50);
+        const end = Math.min(text.length, start + 200);
+        
+        snippet = text.substring(start, end);
+        
+        if (start > 0) {
+            snippet = '...' + snippet;
+        }
+        if (end < text.length) {
+            snippet = snippet + '...';
+        }
+    } else if (text.length > 200) {
+        snippet = text.substring(0, 200) + '...';
+    }
+    
+    return {
+        turnIndex,
+        snippet,
+        timestamp: turn.timestamp,
+        matchType
+    };
+}
 
 export class SqliteConversationStore implements ConversationStore {
     private db: Database.Database;
@@ -94,11 +145,71 @@ export class SqliteConversationStore implements ConversationStore {
                 CREATE INDEX IF NOT EXISTS idx_last_accessed 
                 ON conversations(last_accessed_at);
             `);
+
+            // Create full-text search virtual table (standalone, not external content)
+            // Note: FTS5 doesn't support PRIMARY KEY, so we handle uniqueness in triggers
+            this.db.exec(`
+                CREATE VIRTUAL TABLE IF NOT EXISTS conversations_fts USING fts5(
+                    chat_id UNINDEXED,
+                    content
+                );
+            `);
+
+            // Trigger to keep FTS index in sync on INSERT
+            this.db.exec(`
+                CREATE TRIGGER IF NOT EXISTS conversations_ai AFTER INSERT ON conversations BEGIN
+                    -- Delete any existing FTS entry first to prevent duplicates
+                    DELETE FROM conversations_fts WHERE chat_id = new.chat_id;
+                    -- Insert new FTS entry
+                    INSERT INTO conversations_fts(chat_id, content)
+                    VALUES (new.chat_id, new.name || ' ' || new.turns);
+                END;
+            `);
+
+            // Trigger to keep FTS index in sync on UPDATE
+            this.db.exec(`
+                CREATE TRIGGER IF NOT EXISTS conversations_au AFTER UPDATE ON conversations BEGIN
+                    UPDATE conversations_fts 
+                    SET content = new.name || ' ' || new.turns
+                    WHERE chat_id = new.chat_id;
+                END;
+            `);
+
+            // Trigger to keep FTS index in sync on DELETE
+            this.db.exec(`
+                CREATE TRIGGER IF NOT EXISTS conversations_ad AFTER DELETE ON conversations BEGIN
+                    DELETE FROM conversations_fts WHERE chat_id = old.chat_id;
+                END;
+            `);
+
+            // Clean up any duplicate FTS entries that may exist
+            this.cleanupDuplicateFtsEntries();
         } catch (error: any) {
             throw new Error(
                 `Failed to initialize database schema: ${error.message}. ` +
                 `The database file may be corrupted. Consider backing up and recreating it.`
             );
+        }
+    }
+
+    /**
+     * Clean up duplicate FTS entries.
+     * Keeps only one entry per chat_id (the one with the lowest rowid).
+     */
+    private cleanupDuplicateFtsEntries(): void {
+        try {
+            const result = this.db.exec(`
+                DELETE FROM conversations_fts 
+                WHERE rowid NOT IN (
+                    SELECT MIN(rowid) 
+                    FROM conversations_fts 
+                    GROUP BY chat_id
+                );
+            `);
+            console.log('[SqliteConversationStore] Cleaned up duplicate FTS entries');
+        } catch (error: any) {
+            console.warn(`[SqliteConversationStore] Failed to clean up duplicate FTS entries: ${error.message}`);
+            // Don't throw - this is a best-effort cleanup
         }
     }
 
@@ -199,6 +310,85 @@ export class SqliteConversationStore implements ConversationStore {
         } catch (error: any) {
             console.error(`Error closing database: ${error.message}`);
             throw error;
+        }
+    }
+
+    /**
+     * Process a search result row from SQLite.
+     * Extracts matching turns and creates snippets.
+     */
+    private processSearchRow(row: any, options: SearchOptions): SearchResult {
+        const conversation: Conversation = {
+            chatId: row.chat_id,
+            name: row.name,
+            turns: JSON.parse(row.turns),
+            createdAt: row.created_at,
+            lastAccessedAt: row.last_accessed_at
+        };
+
+        const queryLower = options.query.toLowerCase();
+        const matchingTurns: MatchingTurn[] = [];
+
+        conversation.turns.forEach((turn, index) => {
+            // Search in user message
+            if (turn.userMessage.toLowerCase().includes(queryLower)) {
+                matchingTurns.push(createSnippet(turn, index, 'user', options.query));
+            }
+
+            // Search in assistant response
+            if (turn.assistantResponse && turn.assistantResponse.toLowerCase().includes(queryLower)) {
+                matchingTurns.push(createSnippet(turn, index, 'assistant', options.query));
+            }
+        });
+
+        return {
+            chatId: conversation.chatId,
+            name: conversation.name,
+            createdAt: conversation.createdAt,
+            lastAccessedAt: conversation.lastAccessedAt,
+            matchCount: matchingTurns.length,
+            matchingTurns
+        };
+    }
+
+    async search(options: SearchOptions): Promise<SearchResult[]> {
+        try {
+            // Build SQL query with FTS5
+            // Use DISTINCT to ensure we only get one row per chat_id
+            let sql = `
+                SELECT DISTINCT c.chat_id, c.name, c.created_at, c.last_accessed_at, c.turns
+                FROM conversations c
+                INNER JOIN conversations_fts fts ON c.chat_id = fts.chat_id
+                WHERE fts.content MATCH ?
+            `;
+
+            const params: any[] = [options.query];
+
+            // Add ordering and limit
+            sql += ' ORDER BY fts.rank LIMIT ?';
+            params.push(options.limit || 50);
+
+            // Execute query
+            const stmt = this.db.prepare(sql);
+            const rows = stmt.all(...params) as any[];
+
+            // Process each row to extract matching turns
+            const results = rows
+                .map(row => this.processSearchRow(row, options))
+                .filter(result => result.matchCount > 0);
+
+            // Sort by match count (desc), then by lastAccessedAt (desc)
+            results.sort((a, b) => {
+                if (b.matchCount !== a.matchCount) {
+                    return b.matchCount - a.matchCount;
+                }
+                return b.lastAccessedAt - a.lastAccessedAt;
+            });
+
+            return results;
+        } catch (error: any) {
+            console.error(`Error searching conversations: ${error.message}`);
+            throw new Error(`Failed to search conversations: ${error.message}`);
         }
     }
 }

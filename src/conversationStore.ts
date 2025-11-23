@@ -5,7 +5,7 @@
  * while maintaining a consistent interface.
  */
 
-import { Conversation } from './types.js';
+import { Conversation, SearchOptions, SearchResult } from './types.js';
 
 /**
  * Interface for conversation storage implementations.
@@ -40,4 +40,12 @@ export interface ConversationStore {
      * Primarily for testing purposes.
      */
     clear(): Promise<void>;
+
+    /**
+     * Search conversations by query text and optional filters.
+     * 
+     * @param options - Search parameters
+     * @returns Array of search results with metadata
+     */
+    search(options: SearchOptions): Promise<SearchResult[]>;
 }
