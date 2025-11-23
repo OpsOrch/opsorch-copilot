@@ -579,3 +579,213 @@ describe('SqliteConversationStore', () => {
         });
     });
 });
+
+    describe('Search Snippet Prioritization', () => {
+        it('should prioritize assistant response matches over user message matches', async () => {
+            const { path, cleanup } = createTempDb();
+            
+            try {
+                const store = new SqliteConversationStore(defaultConfig, path);
+                
+                const conversation: Conversation = {
+                    chatId: 'chat1',
+                    name: 'Test',
+                    turns: [
+                        {
+                            userMessage: 'What is the status of the database?',
+                            assistantResponse: 'The database is healthy and running normally.',
+                            timestamp: Date.now(),
+                        },
+                    ],
+                    createdAt: Date.now(),
+                    lastAccessedAt: Date.now(),
+                };
+                
+                await store.set('chat1', conversation);
+                
+                // Search for "database" which appears in both user message and assistant response
+                const results = await store.search({ query: 'database' });
+                
+                assert.strictEqual(results.length, 1);
+                assert.strictEqual(results[0].matchCount, 2);
+                assert.strictEqual(results[0].matchingTurns.length, 2);
+                
+                // First match should be from assistant response
+                assert.strictEqual(results[0].matchingTurns[0].matchType, 'assistant');
+                assert.ok(results[0].matchingTurns[0].snippet.includes('database'));
+                
+                // Second match should be from user message
+                assert.strictEqual(results[0].matchingTurns[1].matchType, 'user');
+                assert.ok(results[0].matchingTurns[1].snippet.includes('database'));
+                
+                await store.close();
+            } finally {
+                cleanup();
+            }
+        });
+
+        it('should show only assistant matches when query only matches assistant', async () => {
+            const { path, cleanup } = createTempDb();
+            
+            try {
+                const store = new SqliteConversationStore(defaultConfig, path);
+                
+                const conversation: Conversation = {
+                    chatId: 'chat1',
+                    name: 'Test',
+                    turns: [
+                        {
+                            userMessage: 'What is the status?',
+                            assistantResponse: 'The service is healthy and operational.',
+                            timestamp: Date.now(),
+                        },
+                    ],
+                    createdAt: Date.now(),
+                    lastAccessedAt: Date.now(),
+                };
+                
+                await store.set('chat1', conversation);
+                
+                // Search for "healthy" which only appears in assistant response
+                const results = await store.search({ query: 'healthy' });
+                
+                assert.strictEqual(results.length, 1);
+                assert.strictEqual(results[0].matchCount, 1);
+                assert.strictEqual(results[0].matchingTurns.length, 1);
+                assert.strictEqual(results[0].matchingTurns[0].matchType, 'assistant');
+                
+                await store.close();
+            } finally {
+                cleanup();
+            }
+        });
+
+        it('should show only user matches when query only matches user message', async () => {
+            const { path, cleanup } = createTempDb();
+            
+            try {
+                const store = new SqliteConversationStore(defaultConfig, path);
+                
+                const conversation: Conversation = {
+                    chatId: 'chat1',
+                    name: 'Test',
+                    turns: [
+                        {
+                            userMessage: 'What is the incident status?',
+                            assistantResponse: 'The issue has been resolved.',
+                            timestamp: Date.now(),
+                        },
+                    ],
+                    createdAt: Date.now(),
+                    lastAccessedAt: Date.now(),
+                };
+                
+                await store.set('chat1', conversation);
+                
+                // Search for "incident" which only appears in user message
+                const results = await store.search({ query: 'incident' });
+                
+                assert.strictEqual(results.length, 1);
+                assert.strictEqual(results[0].matchCount, 1);
+                assert.strictEqual(results[0].matchingTurns.length, 1);
+                assert.strictEqual(results[0].matchingTurns[0].matchType, 'user');
+                
+                await store.close();
+            } finally {
+                cleanup();
+            }
+        });
+
+        it('should prioritize assistant matches across multiple turns', async () => {
+            const { path, cleanup } = createTempDb();
+            
+            try {
+                const store = new SqliteConversationStore(defaultConfig, path);
+                
+                const conversation: Conversation = {
+                    chatId: 'chat1',
+                    name: 'Test',
+                    turns: [
+                        {
+                            userMessage: 'Check the error logs',
+                            assistantResponse: 'I found an error in the logs.',
+                            timestamp: Date.now() - 2000,
+                        },
+                        {
+                            userMessage: 'What caused the error?',
+                            assistantResponse: 'The error was caused by a timeout.',
+                            timestamp: Date.now() - 1000,
+                        },
+                        {
+                            userMessage: 'Is the error fixed?',
+                            timestamp: Date.now(),
+                        },
+                    ],
+                    createdAt: Date.now(),
+                    lastAccessedAt: Date.now(),
+                };
+                
+                await store.set('chat1', conversation);
+                
+                // Search for "error" which appears in multiple places
+                const results = await store.search({ query: 'error' });
+                
+                assert.strictEqual(results.length, 1);
+                assert.strictEqual(results[0].matchCount, 5); // 2 assistant + 3 user
+                assert.strictEqual(results[0].matchingTurns.length, 5);
+                
+                // First two matches should be from assistant responses
+                assert.strictEqual(results[0].matchingTurns[0].matchType, 'assistant');
+                assert.strictEqual(results[0].matchingTurns[1].matchType, 'assistant');
+                
+                // Remaining matches should be from user messages
+                assert.strictEqual(results[0].matchingTurns[2].matchType, 'user');
+                assert.strictEqual(results[0].matchingTurns[3].matchType, 'user');
+                assert.strictEqual(results[0].matchingTurns[4].matchType, 'user');
+                
+                await store.close();
+            } finally {
+                cleanup();
+            }
+        });
+
+        it('should have correct snippet content for assistant matches', async () => {
+            const { path, cleanup } = createTempDb();
+            
+            try {
+                const store = new SqliteConversationStore(defaultConfig, path);
+                
+                const conversation: Conversation = {
+                    chatId: 'chat1',
+                    name: 'Test',
+                    turns: [
+                        {
+                            userMessage: 'What is happening?',
+                            assistantResponse: 'The system is experiencing high latency due to database connection issues.',
+                            timestamp: Date.now(),
+                        },
+                    ],
+                    createdAt: Date.now(),
+                    lastAccessedAt: Date.now(),
+                };
+                
+                await store.set('chat1', conversation);
+                
+                // Search for "latency"
+                const results = await store.search({ query: 'latency' });
+                
+                assert.strictEqual(results.length, 1);
+                assert.strictEqual(results[0].matchingTurns.length, 1);
+                
+                const snippet = results[0].matchingTurns[0].snippet;
+                assert.strictEqual(results[0].matchingTurns[0].matchType, 'assistant');
+                assert.ok(snippet.includes('latency'));
+                assert.ok(snippet.includes('system'));
+                assert.ok(snippet.includes('database'));
+                
+                await store.close();
+            } finally {
+                cleanup();
+            }
+        });
+    });

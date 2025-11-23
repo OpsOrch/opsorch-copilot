@@ -1,6 +1,43 @@
 import express from 'express';
 import { CopilotEngine } from './engine/copilotEngine.js';
 import { createLlmFromEnv } from './llmFactory.js';
+import { Conversation } from './types.js';
+
+/**
+ * Build a preview string for a conversation.
+ * Prioritizes the most recent assistant response over user messages.
+ * 
+ * @param conversation - The conversation to build a preview for
+ * @returns A preview string (max 150 chars) or default text
+ */
+export function buildPreview(conversation: Conversation): string {
+  try {
+    // Strategy: Find the most recent turn with an assistant response
+    // Fall back to last user message if no assistant responses exist
+    
+    // Search backwards through turns for assistant response
+    for (let i = conversation.turns.length - 1; i >= 0; i--) {
+      const turn = conversation.turns[i];
+      if (turn.assistantResponse && turn.assistantResponse.trim()) {
+        const response = turn.assistantResponse.trim();
+        return response.substring(0, 150) + (response.length > 150 ? '...' : '');
+      }
+    }
+    
+    // Fallback: use last user message
+    const lastTurn = conversation.turns[conversation.turns.length - 1];
+    if (lastTurn?.userMessage) {
+      const message = lastTurn.userMessage.trim();
+      return message.substring(0, 150) + (message.length > 150 ? '...' : '');
+    }
+    
+    // Ultimate fallback
+    return 'No preview available';
+  } catch (error) {
+    console.error('Error building preview for conversation', conversation.chatId, error);
+    return 'Preview unavailable';
+  }
+}
 
 function createApp(engineOverride?: CopilotEngine) {
   const app = express();
@@ -43,6 +80,7 @@ function createApp(engineOverride?: CopilotEngine) {
   app.get('/chats', async (req, res) => {
     try {
       const limitStr = req.query.limit as string | undefined;
+      const offsetStr = req.query.offset as string | undefined;
       
       // Parse and validate limit
       let limit: number | undefined;
@@ -54,20 +92,34 @@ function createApp(engineOverride?: CopilotEngine) {
         }
       }
 
+      // Parse and validate offset
+      let offset = 0;
+      if (offsetStr) {
+        offset = parseInt(offsetStr, 10);
+        if (isNaN(offset) || offset < 0) {
+          res.status(400).json({ error: 'offset must be a non-negative number' });
+          return;
+        }
+      }
+
       const conversationManager = engine.getConversationManager();
       const chatIds = await conversationManager.list();
 
       // Build metadata for each conversation
       const conversations = [];
       for (const chatId of chatIds) {
-        const conversation = await conversationManager.getConversation(chatId);
+        const conversation = await conversationManager.peekConversation(chatId);
         if (conversation) {
+          // Build preview using new logic that prioritizes assistant responses
+          const preview = buildPreview(conversation);
+          
           conversations.push({
             chatId: conversation.chatId,
             name: conversation.name,
             createdAt: conversation.createdAt,
             lastAccessedAt: conversation.lastAccessedAt,
             turnCount: conversation.turns.length,
+            preview,
           });
         }
       }
@@ -75,10 +127,21 @@ function createApp(engineOverride?: CopilotEngine) {
       // Sort by most recent first
       conversations.sort((a, b) => b.lastAccessedAt - a.lastAccessedAt);
 
-      // Apply limit if specified
-      const limitedConversations = limit ? conversations.slice(0, limit) : conversations;
+      // Apply pagination
+      const totalCount = conversations.length;
+      const start = offset;
+      const end = limit ? start + limit : conversations.length;
+      const paginatedConversations = conversations.slice(start, end);
 
-      res.json({ conversations: limitedConversations });
+      res.json({ 
+        conversations: paginatedConversations,
+        pagination: {
+          total: totalCount,
+          offset: offset,
+          limit: limit || totalCount,
+          hasMore: end < totalCount
+        }
+      });
     } catch (err) {
       console.error('list chats error', err);
       res.status(500).json({ error: (err as Error).message });

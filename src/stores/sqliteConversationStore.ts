@@ -336,6 +336,7 @@ export class SqliteConversationStore implements ConversationStore {
     /**
      * Process a search result row from SQLite.
      * Extracts matching turns and creates snippets.
+     * Prioritizes assistant response matches over user message matches.
      */
     private processSearchRow(row: any, options: SearchOptions): SearchResult {
         const conversation: Conversation = {
@@ -347,19 +348,23 @@ export class SqliteConversationStore implements ConversationStore {
         };
 
         const queryLower = options.query.toLowerCase();
-        const matchingTurns: MatchingTurn[] = [];
+        const userMatches: MatchingTurn[] = [];
+        const assistantMatches: MatchingTurn[] = [];
 
         conversation.turns.forEach((turn, index) => {
             // Search in user message
             if (turn.userMessage.toLowerCase().includes(queryLower)) {
-                matchingTurns.push(createSnippet(turn, index, 'user', options.query));
+                userMatches.push(createSnippet(turn, index, 'user', options.query));
             }
 
             // Search in assistant response
             if (turn.assistantResponse && turn.assistantResponse.toLowerCase().includes(queryLower)) {
-                matchingTurns.push(createSnippet(turn, index, 'assistant', options.query));
+                assistantMatches.push(createSnippet(turn, index, 'assistant', options.query));
             }
         });
+
+        // Prioritize assistant matches, then user matches
+        const matchingTurns = [...assistantMatches, ...userMatches];
 
         return {
             chatId: conversation.chatId,

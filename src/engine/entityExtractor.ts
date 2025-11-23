@@ -8,6 +8,7 @@ export interface Entity {
   value: string;
   extractedAt: number; // timestamp when extracted
   source: string; // tool name that provided it
+  prominence?: number; // 0-1 score indicating importance/relevance in context
 }
 
 /**
@@ -77,6 +78,52 @@ export class EntityExtractor {
     }
 
     return entities;
+  }
+
+  /**
+   * Extract primary entities from conclusion text and compute prominence scores.
+   * Entities mentioned earlier in the conclusion are considered more prominent.
+   * 
+   * @param conclusion - The synthesized conclusion text
+   * @param allEntities - All extracted entities to check against
+   * @returns Map of entity value to prominence score (0-1)
+   */
+  extractPrimaryEntitiesFromConclusion(
+    conclusion: string,
+    allEntities: Entity[]
+  ): Map<string, number> {
+    const prominenceMap = new Map<string, number>();
+
+    if (!conclusion || !allEntities.length) return prominenceMap;
+
+    const normalizedConclusion = conclusion.toLowerCase();
+
+    // Find position of each entity in conclusion
+    const entityPositions: Array<{ entity: Entity; position: number }> = [];
+
+    for (const entity of allEntities) {
+      const normalizedValue = entity.value.toLowerCase();
+      const position = normalizedConclusion.indexOf(normalizedValue);
+
+      if (position !== -1) {
+        entityPositions.push({ entity, position });
+      }
+    }
+
+    if (entityPositions.length === 0) return prominenceMap;
+
+    // Sort by position (earlier = more prominent)
+    entityPositions.sort((a, b) => a.position - b.position);
+
+    // Assign prominence scores
+    // First mention gets 1.0, subsequent mentions decay
+    const decayFactor = 1.0 / entityPositions.length;
+    entityPositions.forEach((item, index) => {
+      const score = 1.0 - (index * decayFactor * 0.5); // Decay by 50% across all entities
+      prominenceMap.set(item.entity.value, Math.max(0.1, score)); // Minimum 0.1
+    });
+
+    return prominenceMap;
   }
 
   /**
@@ -312,7 +359,8 @@ export class EntityExtractor {
   }
 
   /**
-   * Get most recent entity of a given type
+   * Get most recent entity of a given type.
+   * Uses prominence as a tiebreaker when multiple entities have the same timestamp.
    */
   private getMostRecentEntity(
     context: ConversationContext,
@@ -321,10 +369,17 @@ export class EntityExtractor {
     const entities = context.entities.get(type);
     if (!entities || entities.length === 0) return undefined;
 
-    // Return most recently extracted entity
-    return entities.reduce((latest, current) =>
-      current.extractedAt > latest.extractedAt ? current : latest
-    );
+    // Find entity with highest timestamp, using prominence as tiebreaker
+    return entities.reduce((best, current) => {
+      // Compare timestamps first
+      if (current.extractedAt > best.extractedAt) return current;
+      if (current.extractedAt < best.extractedAt) return best;
+
+      // Timestamps are equal - use prominence as tiebreaker
+      const currentProm = current.prominence ?? 0;
+      const bestProm = best.prominence ?? 0;
+      return currentProm > bestProm ? current : best;
+    });
   }
 
   /**

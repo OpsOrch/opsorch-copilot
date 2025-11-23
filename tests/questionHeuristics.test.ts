@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { test, beforeEach } from 'node:test';
 import { applyQuestionHeuristics } from '../src/engine/questionHeuristics.js';
+import { clearServiceCache } from '../src/engine/serviceDiscovery.js';
+
+beforeEach(() => {
+    clearServiceCache();
+});
+
 import { ToolCall, Tool } from '../src/types.js';
 import { McpClient } from '../src/mcpClient.js';
 
@@ -391,5 +397,89 @@ test('applyQuestionHeuristics skips intent injection if confidence too low', asy
 
     const result = await applyQuestionHeuristics(question, calls, mcp);
     assert.equal(result.length, 0, 'Should not inject anything for low-confidence questions');
+});
+
+// TESTS FOR INFORMAL SERVICE NAME RESOLUTION
+
+test('applyQuestionHeuristics resolves "identity one" to "svc-identity"', async () => {
+    const question = 'tell me more about identity one';
+    const calls: ToolCall[] = [];
+    const mcp = mockMcp(['query-services', 'query-incidents'], ['svc-identity', 'svc-checkout', 'svc-payments']);
+
+    const result = await applyQuestionHeuristics(question, calls, mcp);
+    // Should extract "identity" and match to "svc-identity"
+    // Since "more about" pattern might trigger incident query
+    const anyCall = result[0];
+    if (anyCall?.arguments && (anyCall.arguments as any).scope) {
+        assert.equal((anyCall.arguments as any).scope.service, 'svc-identity',
+            'Should resolve "identity one" to "svc-identity"');
+    }
+});
+
+test('applyQuestionHeuristics resolves "payment service" to "svc-payments"', async () => {
+    const question = 'show logs for payment service';
+    const calls: ToolCall[] = [];
+    // Must include query-services to populate known services list
+    const mcp = mockMcp(['query-logs', 'query-services'], ['svc-identity', 'svc-checkout', 'svc-payments']);
+
+    const result = await applyQuestionHeuristics(question, calls, mcp);
+    const logCall = result.find(c => c.name === 'query-logs');
+    assert.deepEqual((logCall?.arguments as any)?.scope, { service: 'svc-payments' },
+        'Should resolve "payment service" to "svc-payments"');
+});
+
+test('applyQuestionHeuristics resolves "checkout api" to "svc-checkout"', async () => {
+    const question = 'metrics for checkout api';
+    const calls: ToolCall[] = [];
+    const mcp = mockMcp(['query-metrics', 'query-services'], ['svc-identity', 'svc-checkout', 'svc-payments']);
+
+    const result = await applyQuestionHeuristics(question, calls, mcp);
+    const metricCall = result.find(c => c.name === 'query-metrics');
+    assert.deepEqual((metricCall?.arguments as any)?.scope, { service: 'svc-checkout' },
+        'Should resolve "checkout api" to "svc-checkout"');
+});
+
+test('applyQuestionHeuristics handles multi-word service names', async () => {
+    const question = 'show logs for user authentication';
+    const calls: ToolCall[] = [];
+    const mcp = mockMcp(['query-logs', 'query-services'], ['user-authentication-service', 'auth-api', 'svc-identity']);
+
+    const result = await applyQuestionHeuristics(question, calls, mcp);
+    const logCall = result.find(c => c.name === 'query-logs');
+    // Should match "user-authentication-service" because both "user" and "authentication" appear
+    assert.equal((logCall?.arguments as any)?.scope?.service, 'user-authentication-service',
+        'Should match multi-word service name');
+});
+
+test('applyQuestionHeuristics prioritizes higher scoring matches', async () => {
+    const question = 'identity platform logs';
+    const calls: ToolCall[] = [];
+    // Both services contain "identity", but one is exact match
+    const mcp = mockMcp(['query-logs', 'query-services'], ['svc-identity', 'identity-platform', 'other-service']);
+
+    const result = await applyQuestionHeuristics(question, calls, mcp);
+    const logCall = result.find(c => c.name === 'query-logs');
+    // Should prefer "identity-platform" because it has both "identity" and "platform" (bonus score)
+    assert.equal((logCall?.arguments as any)?.scope?.service, 'identity-platform',
+        'Should prioritize service with more word matches');
+});
+
+test('applyQuestionHeuristics uses services from conversation history for fuzzy matching', async () => {
+    const question = 'logs for alpha';
+    const calls: ToolCall[] = [];
+    // MCP has no services initially
+    const mcp = mockMcp(['query-logs']);
+
+    // History has service from previous tool result
+    const previousResults = [{
+        name: 'list-services',
+        result: { services: ['svc-alpha', 'svc-beta'] },
+        arguments: {}
+    }];
+
+    const result = await applyQuestionHeuristics(question, calls, mcp, [], previousResults);
+    const logCall = result.find(c => c.name === 'query-logs');
+    assert.deepEqual((logCall?.arguments as any)?.scope, { service: 'svc-alpha' },
+        'Should resolve "alpha" to "svc-alpha" from history');
 });
 

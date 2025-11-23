@@ -47,8 +47,17 @@ export async function applyQuestionHeuristics(
 
   // Fetch known services for fuzzy matching
   // We need the tools list for getKnownServices, so we fetch it from mcp
+  // Fetch known services for fuzzy matching
+  // We need the tools list for getKnownServices, so we fetch it from mcp
   const tools = await mcp.listTools();
-  const knownServices = await getKnownServices(mcp, tools);
+  const discoveredServices = await getKnownServices(mcp, tools);
+
+  // Merge discovered services with those found in conversation history
+  // This ensures we can resolve "identity one" if "svc-identity" was seen in a previous result
+  const knownServices = Array.from(new Set([
+    ...discoveredServices,
+    ...(historyContext.knownServices || [])
+  ]));
 
   // Only apply heuristics if LLM didn't provide any meaningful plan
   // Empty plan (length = 0) should still allow heuristics to inject
@@ -322,12 +331,19 @@ function extractContextFromHistory(
   service?: string;
   incident?: string;
   timeRange?: { start: string; end: string };
+  knownServices?: string[];  // NEW: All services seen in conversation
+  knownIncidents?: string[];  // NEW: All incidents seen in conversation
 } {
   const context: {
     service?: string;
     incident?: string;
     timeRange?: { start: string; end: string };
-  } = {};
+    knownServices?: string[];
+    knownIncidents?: string[];
+  } = {
+    knownServices: [],
+    knownIncidents: []
+  };
 
   // 1. Extract from message text
   // Look through recent messages to find service mentions
@@ -368,26 +384,58 @@ function extractContextFromHistory(
     }
   }
 
-  // 2. Extract from tool results (NEW)
+  // 2. Extract from tool results - collect ALL services and incidents
   if (allPreviousResults) {
     for (const result of allPreviousResults) {
       const payload = result.result;
 
       if (!payload || typeof payload !== 'object') continue;
 
-      // Extract service from various possible locations
+      // Extract ALL services from list-services or query-services results
+      if (result.name === 'list-services' || result.name === 'query-services') {
+        if (Array.isArray((payload as any).services)) {
+          for (const svc of (payload as any).services) {
+            const serviceName = typeof svc === 'string' ? svc : svc?.id || svc?.name;
+            if (serviceName && !context.knownServices!.includes(serviceName)) {
+              context.knownServices!.push(serviceName);
+            }
+          }
+        }
+      }
+
+      // Extract ALL incidents from list-incidents or query-incidents results
+      if (result.name === 'list-incidents' || result.name === 'query-incidents') {
+        if (Array.isArray((payload as any).incidents)) {
+          for (const inc of (payload as any).incidents) {
+            if (inc?.id && !context.knownIncidents!.includes(inc.id)) {
+              context.knownIncidents!.push(inc.id);
+            }
+            // Also track services from incidents
+            if (inc?.service && !context.knownServices!.includes(inc.service)) {
+              context.knownServices!.push(inc.service);
+            }
+          }
+        }
+      }
+
+      // Extract service from various possible locations (for lastService context)
       if (!context.service) {
         // From scope.service
         const scope = (payload as any).scope;
         if (scope?.service && typeof scope.service === 'string') {
           context.service = scope.service;
-          continue; // Found service, move to next result
+          if (!context.knownServices!.includes(scope.service)) {
+            context.knownServices!.push(scope.service);
+          }
         }
 
         // From top-level service field
         if ((payload as any).service && typeof (payload as any).service === 'string') {
-          context.service = (payload as any).service;
-          continue;
+          const svc = (payload as any).service;
+          context.service = svc;
+          if (!context.knownServices!.includes(svc)) {
+            context.knownServices!.push(svc);
+          }
         }
 
         // From nested items (incidents might have service field)
@@ -395,17 +443,22 @@ function extractContextFromHistory(
           const firstIncident = (payload as any).incidents[0];
           if (firstIncident?.service && typeof firstIncident.service === 'string') {
             context.service = firstIncident.service;
-            continue;
+            if (!context.knownServices!.includes(firstIncident.service)) {
+              context.knownServices!.push(firstIncident.service);
+            }
           }
         }
       }
 
-      // Extract incident ID
+      // Extract incident ID (most recent)
       if (!context.incident) {
         if ((payload as any).id && typeof (payload as any).id === 'string') {
           const id = (payload as any).id;
           if (id.startsWith('inc-') || id.startsWith('INC-')) {
             context.incident = id;
+            if (!context.knownIncidents!.includes(id)) {
+              context.knownIncidents!.push(id);
+            }
           }
         }
 
@@ -414,6 +467,9 @@ function extractContextFromHistory(
           const firstIncident = (payload as any).incidents[0];
           if (firstIncident?.id && typeof firstIncident.id === 'string') {
             context.incident = firstIncident.id;
+            if (!context.knownIncidents!.includes(firstIncident.id)) {
+              context.knownIncidents!.push(firstIncident.id);
+            }
           }
         }
       }
@@ -467,37 +523,87 @@ function extractService(question: string, knownServices: string[]): string | und
     }
   }
 
-  // 2. Check for known service parts (e.g. "payment" matching "payment-service")
-  // We prioritize this over generic regex extraction to map "payments" -> "payment-service"
-  const genericTerms = ['service', 'api', 'app', 'application', 'system', 'platform', 'backend', 'frontend'];
+  // 2. Word-based matching - extract significant words from question
+  // This handles cases like "identity one" -> "svc-identity"
+  const genericTerms = ['service', 'svc', 'api', 'app', 'application', 'system', 'platform', 'backend', 'frontend',
+    'one', 'two', 'three', 'four', 'five', 'the', 'a', 'an', 'about', 'tell', 'me', 'more'];
+  const stopWords = ['the', 'a', 'an', 'last', 'past', 'this', 'that', 'what', 'which', 'when', 'where',
+    'show', 'get', 'give', 'tell', 'me', 'more', 'about', 'for', 'in', 'on'];
+
+  const questionWords = normalized
+    .split(/\W+/)
+    .filter(w => w.length > 2 && !stopWords.includes(w));
+
+  // For each known service, calculate a match score
+  const serviceScores: Array<{ service: string; score: number }> = [];
 
   for (const service of knownServices) {
-    // Split service by - or _
-    const parts = service.split(/[-_]/);
+    const serviceLower = service.toLowerCase();
+    const serviceParts = serviceLower.split(/[-_]/);
+    const significantParts = serviceParts.filter(p =>
+      p.length > 2 && !genericTerms.includes(p)
+    );
 
-    if (parts.some(p =>
-      p.length > 3 &&
-      !genericTerms.includes(p.toLowerCase()) &&
-      normalized.includes(p.toLowerCase())
-    )) {
-      return service;
+    let score = 0;
+    let matchedSignificant = false;
+
+    // Score based on how many significant question words match service parts
+    for (const word of questionWords) {
+      // Exact match with a service part
+      if (significantParts.some(p => p === word)) {
+        score += 10;
+        matchedSignificant = true;
+        continue;
+      }
+
+      // Stemming: "payments" -> "payment"
+      const stem = word.endsWith('s') ? word.slice(0, -1) : word;
+      if (significantParts.some(p => p === stem || stem === p.replace(/s$/, ''))) {
+        score += 8;
+        matchedSignificant = true;
+        continue;
+      }
+
+      // Partial match: "identity" in "svc-identity"
+      if (significantParts.some(p => p.includes(word) || word.includes(p))) {
+        score += 5;
+        matchedSignificant = true;
+      }
+
+      // Full service name contains the word
+      if (serviceLower.includes(word)) {
+        score += 3;
+      }
     }
-    // Check if question contains "payments" and service is "payment-service"
-    // Simple stemming: remove 's' at end
-    const words = normalized.split(/\W+/);
-    if (words.some(w => {
-      const stem = w.endsWith('s') ? w.slice(0, -1) : w;
-      return stem.length > 3 &&
-        !genericTerms.includes(stem) &&
-        service.toLowerCase().includes(stem);
-    })) {
-      return service;
+
+    // Bonus for matching generic parts if they appear in question
+    // e.g. "identity platform" matches "identity-platform" better than "svc-identity"
+    const genericParts = serviceParts.filter(p => genericTerms.includes(p));
+    for (const part of genericParts) {
+      if (normalized.includes(part)) {
+        score += 2;
+      }
+    }
+
+    if (score > 0 && (matchedSignificant || significantParts.length === 0)) {
+      serviceScores.push({ service, score });
     }
   }
 
-  // 3. Fuzzy match (regex extraction)
-  // Match "service <name>", "for <name>", "in <name>"
-  const serviceMatch = normalized.match(/(?:service|for|in)\s+([a-z0-9-_]+)/i);
+  // Return the highest scoring service if score is high enough
+  if (serviceScores.length > 0) {
+    serviceScores.sort((a, b) => b.score - a.score);
+    const best = serviceScores[0];
+
+    // Require at least a score of 5 (one partial match)
+    if (best.score >= 5) {
+      return best.service;
+    }
+  }
+
+  // 3. Fallback: regex extraction
+  // Match "service <name>", "for <name>", "in <name>", "about <name>"
+  const serviceMatch = normalized.match(/(?:service|for|in|about)\s+([a-z0-9-_]+)/i);
   if (serviceMatch) {
     const captured = serviceMatch[1];
     // Check if captured is close to any known service
@@ -505,7 +611,6 @@ function extractService(question: string, knownServices: string[]): string | und
     if (match) return match;
 
     // Filter out common prepositions/stopwords if they were captured by mistake
-    const stopWords = ['the', 'a', 'an', 'last', 'past', 'this'];
     if (!stopWords.includes(captured)) {
       return captured;
     }

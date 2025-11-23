@@ -299,3 +299,207 @@ test('InMemoryConversationStore - multiple matches in single turn', async () => 
     assert.equal(results[0].matchCount, 2);
     assert.equal(results[0].matchingTurns.length, 2);
 });
+
+// ============================================================================
+// Search Snippet Prioritization Tests
+// ============================================================================
+
+test('InMemoryConversationStore - prioritizes assistant response matches over user message matches', async () => {
+    const store = new InMemoryConversationStore(DEFAULT_CONVERSATION_CONFIG);
+
+    const conversation: Conversation = {
+        chatId: 'chat-1',
+        name: 'Test',
+        turns: [
+            {
+                userMessage: 'What is the status of the database?',
+                assistantResponse: 'The database is healthy and running normally.',
+                timestamp: Date.now(),
+            },
+        ],
+        createdAt: Date.now(),
+        lastAccessedAt: Date.now(),
+    };
+
+    await store.set('chat-1', conversation);
+
+    // Search for "database" which appears in both user message and assistant response
+    const results = await store.search({ query: 'database' });
+    
+    assert.equal(results.length, 1);
+    assert.equal(results[0].matchCount, 2);
+    assert.equal(results[0].matchingTurns.length, 2);
+    
+    // First match should be from assistant response
+    assert.equal(results[0].matchingTurns[0].matchType, 'assistant');
+    assert.ok(results[0].matchingTurns[0].snippet.includes('database'));
+    
+    // Second match should be from user message
+    assert.equal(results[0].matchingTurns[1].matchType, 'user');
+    assert.ok(results[0].matchingTurns[1].snippet.includes('database'));
+});
+
+test('InMemoryConversationStore - shows only assistant matches when query only matches assistant', async () => {
+    const store = new InMemoryConversationStore(DEFAULT_CONVERSATION_CONFIG);
+
+    const conversation: Conversation = {
+        chatId: 'chat-1',
+        name: 'Test',
+        turns: [
+            {
+                userMessage: 'What is the status?',
+                assistantResponse: 'The service is healthy and operational.',
+                timestamp: Date.now(),
+            },
+        ],
+        createdAt: Date.now(),
+        lastAccessedAt: Date.now(),
+    };
+
+    await store.set('chat-1', conversation);
+
+    // Search for "healthy" which only appears in assistant response
+    const results = await store.search({ query: 'healthy' });
+    
+    assert.equal(results.length, 1);
+    assert.equal(results[0].matchCount, 1);
+    assert.equal(results[0].matchingTurns.length, 1);
+    assert.equal(results[0].matchingTurns[0].matchType, 'assistant');
+});
+
+test('InMemoryConversationStore - shows only user matches when query only matches user message', async () => {
+    const store = new InMemoryConversationStore(DEFAULT_CONVERSATION_CONFIG);
+
+    const conversation: Conversation = {
+        chatId: 'chat-1',
+        name: 'Test',
+        turns: [
+            {
+                userMessage: 'What is the incident status?',
+                assistantResponse: 'The issue has been resolved.',
+                timestamp: Date.now(),
+            },
+        ],
+        createdAt: Date.now(),
+        lastAccessedAt: Date.now(),
+    };
+
+    await store.set('chat-1', conversation);
+
+    // Search for "incident" which only appears in user message
+    const results = await store.search({ query: 'incident' });
+    
+    assert.equal(results.length, 1);
+    assert.equal(results[0].matchCount, 1);
+    assert.equal(results[0].matchingTurns.length, 1);
+    assert.equal(results[0].matchingTurns[0].matchType, 'user');
+});
+
+test('InMemoryConversationStore - prioritizes assistant matches across multiple turns', async () => {
+    const store = new InMemoryConversationStore(DEFAULT_CONVERSATION_CONFIG);
+
+    const conversation: Conversation = {
+        chatId: 'chat-1',
+        name: 'Test',
+        turns: [
+            {
+                userMessage: 'Check the error logs',
+                assistantResponse: 'I found an error in the logs.',
+                timestamp: Date.now() - 2000,
+            },
+            {
+                userMessage: 'What caused the error?',
+                assistantResponse: 'The error was caused by a timeout.',
+                timestamp: Date.now() - 1000,
+            },
+            {
+                userMessage: 'Is the error fixed?',
+                timestamp: Date.now(),
+            },
+        ],
+        createdAt: Date.now(),
+        lastAccessedAt: Date.now(),
+    };
+
+    await store.set('chat-1', conversation);
+
+    // Search for "error" which appears in multiple places
+    const results = await store.search({ query: 'error' });
+    
+    assert.equal(results.length, 1);
+    assert.equal(results[0].matchCount, 5); // 2 assistant + 3 user
+    assert.equal(results[0].matchingTurns.length, 5);
+    
+    // First two matches should be from assistant responses
+    assert.equal(results[0].matchingTurns[0].matchType, 'assistant');
+    assert.equal(results[0].matchingTurns[1].matchType, 'assistant');
+    
+    // Remaining matches should be from user messages
+    assert.equal(results[0].matchingTurns[2].matchType, 'user');
+    assert.equal(results[0].matchingTurns[3].matchType, 'user');
+    assert.equal(results[0].matchingTurns[4].matchType, 'user');
+});
+
+test('InMemoryConversationStore - snippet content is correct for assistant matches', async () => {
+    const store = new InMemoryConversationStore(DEFAULT_CONVERSATION_CONFIG);
+
+    const conversation: Conversation = {
+        chatId: 'chat-1',
+        name: 'Test',
+        turns: [
+            {
+                userMessage: 'What is happening?',
+                assistantResponse: 'The system is experiencing high latency due to database connection issues.',
+                timestamp: Date.now(),
+            },
+        ],
+        createdAt: Date.now(),
+        lastAccessedAt: Date.now(),
+    };
+
+    await store.set('chat-1', conversation);
+
+    // Search for "latency"
+    const results = await store.search({ query: 'latency' });
+    
+    assert.equal(results.length, 1);
+    assert.equal(results[0].matchingTurns.length, 1);
+    
+    const snippet = results[0].matchingTurns[0].snippet;
+    assert.equal(results[0].matchingTurns[0].matchType, 'assistant');
+    assert.ok(snippet.includes('latency'));
+    assert.ok(snippet.includes('system'));
+    assert.ok(snippet.includes('database'));
+});
+
+test('InMemoryConversationStore - snippet truncation works for assistant responses', async () => {
+    const store = new InMemoryConversationStore(DEFAULT_CONVERSATION_CONFIG);
+
+    const longResponse = 'The system is experiencing issues. ' + 'a'.repeat(300) + ' This is a test query that should be found.';
+    const conversation: Conversation = {
+        chatId: 'chat-1',
+        name: 'Test',
+        turns: [
+            {
+                userMessage: 'What is wrong?',
+                assistantResponse: longResponse,
+                timestamp: Date.now(),
+            },
+        ],
+        createdAt: Date.now(),
+        lastAccessedAt: Date.now(),
+    };
+
+    await store.set('chat-1', conversation);
+
+    // Search for "test" which appears late in the response
+    const results = await store.search({ query: 'test' });
+    
+    assert.equal(results.length, 1);
+    const snippet = results[0].matchingTurns[0].snippet;
+    
+    // Snippet should be truncated and include the match
+    assert.ok(snippet.length <= 210);
+    assert.ok(snippet.includes('test'));
+    assert.equal(results[0].matchingTurns[0].matchType, 'assistant');
+});

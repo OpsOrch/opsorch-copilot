@@ -373,7 +373,7 @@ test('EntityExtractor: handles "before that" time reference', () => {
   assert.ok(resolutions.has('before that'));
   const resolvedTime = resolutions.get('before that');
   assert.ok(resolvedTime);
-  
+
   // Should be 1 hour before base time
   const baseMs = new Date(baseTime).getTime();
   const resolvedMs = new Date(resolvedTime!).getTime();
@@ -424,7 +424,7 @@ test('EntityExtractor: handles multiple references in one question', () => {
             type: 'service',
             value: 'payment-api',
             extractedAt: Date.now(),
-            source: 'query-incidents',
+            source: 'list-services',
           },
         ],
       ],
@@ -432,12 +432,98 @@ test('EntityExtractor: handles multiple references in one question', () => {
   };
 
   const resolutions = extractor.resolveReference(
-    'Show me logs for this service related to that incident',
+    'What caused this service failure for that incident?',
     context
   );
 
-  // Should have resolutions for both service and incident (multiple variations per entity)
   assert.ok(resolutions.size >= 2);
   assert.equal(resolutions.get('this service'), 'payment-api');
   assert.equal(resolutions.get('that incident'), 'INC-999');
+});
+
+test('EntityExtractor: uses prominence as tiebreaker when timestamps are equal', () => {
+  const extractor = new EntityExtractor();
+  const now = Date.now();
+  const context: ConversationContext = {
+    chatId: 'test-chat',
+    entities: new Map([
+      [
+        'incident',
+        [
+          { type: 'incident', value: 'inc-002', extractedAt: now, source: 'list-incidents', prominence: 0.1 },
+          { type: 'incident', value: 'inc-005', extractedAt: now, source: 'list-incidents', prominence: 0.9 },
+          { type: 'incident', value: 'inc-008', extractedAt: now, source: 'list-incidents', prominence: 0.3 },
+        ],
+      ],
+    ]),
+  };
+
+  const resolutions = extractor.resolveReference('tell me more about that incident', context);
+
+  assert.ok(resolutions.has('that incident'));
+  assert.equal(resolutions.get('that incident'), 'inc-005'); // Should pick highest prominence
+});
+
+test('EntityExtractor: extracts primary entities from conclusion', () => {
+  const extractor = new EntityExtractor();
+  const conclusion = "Production is generally healthy (health=status:ok), but there is an active Sev2 latency-related incident for svc-identity: 'Auth latency spikes for mobile logins' (inc-005), currently in mitigating state. No other incidents explicitly reference latency, though multiple prod services have active incidents with other symptoms including inc-002 and inc-008.";
+  const entities: Entity[] = [
+    { type: 'incident', value: 'inc-002', extractedAt: Date.now(), source: 'list-incidents' },
+    { type: 'incident', value: 'inc-005', extractedAt: Date.now(), source: 'list-incidents' },
+    { type: 'incident', value: 'inc-008', extractedAt: Date.now(), source: 'list-incidents' },
+  ];
+
+  const prominence = extractor.extractPrimaryEntitiesFromConclusion(conclusion, entities);
+
+  assert.ok(prominence.has('inc-005'));
+  assert.ok(prominence.get('inc-005')! > prominence.get('inc-002')!);
+  assert.ok(prominence.get('inc-005')! > prominence.get('inc-008')!);
+
+  // inc-005 should have highest prominence since it appears first and is featured
+  assert.equal(prominence.get('inc-005'), 1.0);
+});
+
+test('EntityExtractor: returns empty map when conclusion has no entity mentions', () => {
+  const extractor = new EntityExtractor();
+  const conclusion = "The system is healthy and no issues were detected.";
+  const entities: Entity[] = [
+    { type: 'incident', value: 'inc-002', extractedAt: Date.now(), source: 'list-incidents' },
+  ];
+
+  const prominence = extractor.extractPrimaryEntitiesFromConclusion(conclusion, entities);
+
+  assert.equal(prominence.size, 0);
+});
+
+test('EntityExtractor: handles case-insensitive entity matching in conclusion', () => {
+  const extractor = new EntityExtractor();
+  const conclusion = "The incident INC-005 is affecting production.";
+  const entities: Entity[] = [
+    { type: 'incident', value: 'inc-005', extractedAt: Date.now(), source: 'list-incidents' },
+  ];
+
+  const prominence = extractor.extractPrimaryEntitiesFromConclusion(conclusion, entities);
+
+  assert.ok(prominence.has('inc-005'));
+  assert.ok(prominence.get('inc-005')! > 0);
+});
+
+test('EntityExtractor: prominence decreases for later mentions', () => {
+  const extractor = new EntityExtractor();
+  const conclusion = "First mention inc-001, then inc-002, finally inc-003.";
+  const entities: Entity[] = [
+    { type: 'incident', value: 'inc-001', extractedAt: Date.now(), source: 'test' },
+    { type: 'incident', value: 'inc-002', extractedAt: Date.now(), source: 'test' },
+    { type: 'incident', value: 'inc-003', extractedAt: Date.now(), source: 'test' },
+  ];
+
+  const prominence = extractor.extractPrimaryEntitiesFromConclusion(conclusion, entities);
+
+  const prom1 = prominence.get('inc-001')!;
+  const prom2 = prominence.get('inc-002')!;
+  const prom3 = prominence.get('inc-003')!;
+
+  assert.ok(prom1 > prom2);
+  assert.ok(prom2 > prom3);
+  assert.equal(prom1, 1.0); // First gets 1.0
 });

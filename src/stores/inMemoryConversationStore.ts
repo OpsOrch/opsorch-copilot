@@ -123,19 +123,23 @@ export class InMemoryConversationStore implements ConversationStore {
         const queryLower = options.query.toLowerCase();
         
         for (const [chatId, conversation] of this.conversations) {
-            const matchingTurns: MatchingTurn[] = [];
+            const userMatches: MatchingTurn[] = [];
+            const assistantMatches: MatchingTurn[] = [];
             
             conversation.turns.forEach((turn, index) => {
                 // Search in user message
                 if (turn.userMessage.toLowerCase().includes(queryLower)) {
-                    matchingTurns.push(createSnippet(turn, index, 'user', options.query));
+                    userMatches.push(createSnippet(turn, index, 'user', options.query));
                 }
                 
                 // Search in assistant response
                 if (turn.assistantResponse && turn.assistantResponse.toLowerCase().includes(queryLower)) {
-                    matchingTurns.push(createSnippet(turn, index, 'assistant', options.query));
+                    assistantMatches.push(createSnippet(turn, index, 'assistant', options.query));
                 }
             });
+            
+            // Prioritize assistant matches, then user matches
+            const matchingTurns = [...assistantMatches, ...userMatches];
             
             if (matchingTurns.length > 0) {
                 results.push({

@@ -56,3 +56,7 @@ export async function getKnownServices(
 
     return [];
 }
+export function clearServiceCache() {
+    cachedServices = [];
+    lastFetchTime = 0;
+}

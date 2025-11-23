@@ -379,6 +379,33 @@ export class CopilotEngine {
 
       // E. Extract entities from results
       const extractedEntities = this.entityExtractor.extractFromResults(results);
+
+      // On the first iteration of a follow-up question, boost prominence of entities
+      // mentioned in the previous conversation turn's conclusion
+      if (iteration === 1 && !isNewConversation) {
+        const conversation = await this.conversationManager.getConversation(chatId);
+        const lastTurn = conversation?.turns[conversation.turns.length - 1];
+
+        if (lastTurn?.assistantResponse) {
+          const prominenceBoosts = this.entityExtractor.extractPrimaryEntitiesFromConclusion(
+            lastTurn.assistantResponse,
+            extractedEntities
+          );
+
+          // Apply prominence scores to extracted entities
+          for (const entity of extractedEntities) {
+            const boost = prominenceBoosts.get(entity.value);
+            if (boost !== undefined) {
+              entity.prominence = boost;
+            }
+          }
+
+          if (prominenceBoosts.size > 0) {
+            console.log(`[Copilot][${chatId}] Applied prominence boosts to ${prominenceBoosts.size} entity/entities based on previous conclusion`);
+          }
+        }
+      }
+
       if (extractedEntities.length > 0) {
         console.log(`[Copilot][${chatId}] Extracted ${extractedEntities.length} entity/entities from iteration ${iteration}`);
         allExtractedEntities.push(...extractedEntities);
