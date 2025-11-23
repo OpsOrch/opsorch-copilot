@@ -9,7 +9,8 @@
     "dev": "node --loader ts-node/esm src/server.ts",
     "lint": "tsc --noEmit",
     "test": "NODE_ENV=test node --test --loader ts-node/esm tests/*.test.ts",
-    "start": "node --loader ts-node/esm src/server.ts"
+    "start": "node --loader ts-node/esm src/server.ts",
+    "seed": "node --loader ts-node/esm scripts/seedDatabase.ts"
   },
   "dependencies": {
     "better-sqlite3": "^12.4.6",

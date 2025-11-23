@@ -105,3 +105,26 @@ cp /path/to/conversations.db /path/to/backup/conversations-$(date +%Y%m%d).db
 # Restore
 cp /path/to/backup/conversations-20250122.db /path/to/conversations.db
 ```
+
+### Seeding the Database
+
+To populate the database with realistic sample conversations for testing or demo purposes:
+
+```bash
+npm run seed
+```
+
+This will:
+- Clear any existing conversations in the database
+- Generate 30 realistic operational conversations covering various scenarios:
+  - Incident investigations (high error rates, service outages)
+  - Service health checks and monitoring
+  - Performance issues (latency spikes, memory leaks)
+  - Database and infrastructure problems
+  - Deployment verifications
+  - SSL certificate management
+  - Rate limiting and cache issues
+- Populate conversations with realistic tool results, timestamps, and entities
+- Distribute conversations across the last 30 days
+
+The seed script uses the database path from `SQLITE_DB_PATH` environment variable or defaults to `./data/conversations.db`.
