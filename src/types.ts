@@ -52,20 +52,32 @@ export type CopilotReferences = {
 };
 
 export type MetricReference = {
-  expression: string;
+  expression: MetricExpression;
   start?: string;
   end?: string;
   step?: number;
-  scope?: string;
+  scope?: QueryScope;
 };
 
 export type LogReference = {
-  query: string;
+  expression: LogExpression;
   start?: string;
   end?: string;
-  service?: string;
-  scope?: string;
+  scope?: QueryScope;
 };
+
+export interface MetricExpression {
+  metricName: string;
+  aggregation?: string;
+  filters?: { label: string; operator: string; value: string }[];
+  groupBy?: string[];
+}
+
+export interface LogExpression {
+  search?: string;
+  filters?: { field: string; operator: string; value: string }[];
+  severityIn?: string[];
+}
 
 export type CopilotPlan = {
   intent: string;

@@ -32,13 +32,14 @@ export const logDomain: DomainConfig = {
   // Reference extraction & buckets
   referenceExtraction: {
     argumentPaths: {
-      log_query: ['$.arguments.query'],
+      log_query: ['$.arguments.expression.search'],
     },
     structuredReferences: [
       {
         bucket: 'logs',
         schema: 'copilot.logQuery',
-        requiredFields: [{ name: 'query', path: '$.arguments.query' }],
+        // Expression is already an object with search, filters, severityIn
+        requiredFields: [{ name: 'expression', path: '$.arguments.expression' }],
         optionalFields: [
           { name: 'start', path: '$.arguments.start' },
           { name: 'end', path: '$.arguments.end' },

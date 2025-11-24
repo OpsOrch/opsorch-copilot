@@ -28,7 +28,7 @@ import { ScopeInferer } from './scopeInferer.js';
 import { domainRegistry } from './domainRegistry.js';
 
 const DEFAULT_MAX_ITERATIONS = 3;
-const MAX_TOOL_CALLS_PER_ITERATION = 3;
+const MAX_TOOL_CALLS_PER_ITERATION = 5;
 
 /**
  * CopilotEngine orchestrates the end-to-end flow of answering operational questions.
@@ -299,7 +299,6 @@ export class CopilotEngine {
       console.log(`[Copilot][${chatId}] Starting iteration ${iteration}/${this.maxIterations}`);
 
       let plannedCalls: ToolCall[] = [];
-      const iterationStartTime = Date.now();
 
       // A. Plan
       if (isFirstIteration) {

@@ -6,6 +6,8 @@ export function buildSystemPrompt(): string {
     '',
     'Core Principles:',
     '• Use ONLY the provided MCP tools - never invent data or guess capabilities',
+    '• CRITICAL: NEVER make up metric names. ALWAYS call describe-metrics FIRST, then query ONLY metrics that were returned',
+    '• If you want to query metrics but have not called describe-metrics yet, you MUST call describe-metrics in this iteration',
     '• Provide answers in this format: **Conclusion first**, then supporting evidence with concrete IDs and timestamps',
     '• Reference actual entities via `references` fields (incidents, services, metrics, logs) for UI deep-linking',
     '• When data is incomplete, explicitly state what\'s missing and suggest the next concrete action',
@@ -32,8 +34,12 @@ export function buildPlannerPrompt(toolContext: string): string {
     `${buildSystemPrompt()}\n\n${toolContext}\n\n${fewShotGuidelines}\n\n` +
     'YOUR TASK (Planning):\n' +
     '• First, briefly explain your reasoning: what are you trying to accomplish and why?\n' +
-    '• Then propose 1-3 runnable tool calls with concrete arguments (NO placeholders)\n' +
-    '• If the user references "this service" or "that incident", use the actual names/IDs from history\n' +
+    '• Then propose 1-5 runnable tool calls with concrete arguments (NO placeholders)\n' +
+    '• **CRITICAL: CONTEXT RETENTION**\n' +
+    '  - Check conversation history for the active service, incident, or time window.\n' +
+    '  - If the user asks "show logs" or "check metrics" without specifying a service, **YOU MUST USE THE SERVICE FROM THE PREVIOUS TURN**.\n' +
+    '  - Do NOT call discovery tools (like query-incidents or query-services) if you already know the service/incident from history.\n' +
+    '  - Directly call the relevant tool (e.g., query-logs) with the `scope` derived from history.\n' +
     '• Include time windows when querying temporal data (logs, metrics, incidents)\n' +
     '• Combine related queries (e.g., logs + metrics) when investigating root causes'
   );
@@ -60,7 +66,7 @@ export function buildJsonPlannerPrompt(toolList: string): string {
     '}',
     '',
     'Rules:',
-    '• Include 1-3 tool calls maximum - fewer is better when sufficient',
+    '• Include 1-5 tool calls maximum - fewer is better when sufficient',
     '• Use concrete values only - NO placeholders like {{incidentId}}, {{start}}, {{end}}',
     '• Reference conversation history for context (service names, incident IDs, time ranges)',
     '• Include time windows for temporal queries (last 30 minutes = calculate actual ISO timestamps)',
@@ -80,6 +86,11 @@ export function buildRefinementPrompt(toolContext: string, resultCount: number):
     '• If a tool failed, consider why and try an alternative approach',
     '• Adjust parameters (e.g., widen time window, change service scope)',
     '• Use different tools that might achieve the same goal',
+    '',
+    'CRITICAL METRIC RULES:',
+    '• If you called describe-metrics, you MUST use the metric names from the results',
+    '• NEVER query a metric that was not returned by describe-metrics',
+    '• If describe-metrics returned no metrics or empty results, DO NOT call query-metrics',
     '',
     'YOUR TASK:',
     '• Determine if additional tool calls would materially improve the answer',
@@ -111,7 +122,7 @@ export function buildFinalAnswerPrompt(): string {
     '• **Conclusion**: Clear, actionable summary (service, status, timeframe, impact, suspected cause)',
     '• **Evidence**: Bullet points with concrete facts from tool results (include timestamps and IDs)',
     '• **Missing**: What data is unavailable and what to check next',
-    '• **References**: Populate incident IDs, metric expressions with windows, log queries with scopes',
+    '• **References**: Extract key entities (incidents, services, etc.) mentioned in the answer for deep linking',
     '• **Confidence**: 0.0-1.0 based on data completeness and clarity',
     '',
     'Rules:',
@@ -127,10 +138,8 @@ export function buildFinalAnswerPrompt(): string {
     '  "missing": ["what\'s unknown", "suggested next step"],',
     '  "references": {',
     '    "incidents": ["INC-123"],',
-    '    "services": ["payment-api"],',
-    '    "metrics": [{"expression":"latency_p95","start":"...","end":"...","step":60,"scope":"..."}],',
-    '    "logs": [{"query":"error OR 500","start":"...","end":"...","service":"..."}],',
-    '    "tickets": []',
+    '    "services": ["payment-service"],',
+    '    "tickets": ["TICKET-456"]',
     '  },',
     '  "confidence": 0.85',
     '}',
@@ -170,9 +179,11 @@ Investigation Patterns & Best Practices:
    → Report if metrics/errors correlate with deploy
 
 5. **Performance Investigation (Latency/CPU/Memory)**
-   → query-metrics for multiple expressions: latency_p95, cpu_usage, memory_usage, rps
+   → FIRST: describe-metrics to discover available metrics for the service
+   → THEN: query-metrics for multiple expressions: latency_p95, cpu_usage, memory_usage, rps
    → Use same time window and service scope for all
    → Identify if peaks align (e.g., CPU spike → latency increase)
+   → CRITICAL: Only query metrics that were returned by describe-metrics
 
 6. **Error Pattern Analysis**
    → query-logs with service + time window

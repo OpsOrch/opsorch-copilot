@@ -1,72 +1,10 @@
 import {
     CopilotReferences,
-    LogReference,
-    MetricReference,
     ToolResult,
 } from '../types.js';
 import { DomainRegistry } from './domainRegistry.js';
 import { extractByPath, extractByPaths } from './pathExtractor.js';
 import { normalizeMetricStep } from './metricUtils.js';
-
-/**
- * Sanitize and validate references from external sources.
- * Keeps existing implementation for backward compatibility.
- */
-export function sanitizeReferences(raw: any): CopilotReferences | undefined {
-    if (!raw || typeof raw !== 'object') return undefined;
-
-    const toStrings = (value: any) =>
-        (Array.isArray(value) ? value.map((v) => (typeof v === 'string' ? v.trim() : '')).filter(Boolean) : []) as string[];
-
-    const refs: CopilotReferences = {};
-
-    const metrics: MetricReference[] = Array.isArray((raw as any).metrics)
-        ? ((raw as any).metrics as any[])
-            .map((m) => {
-                if (!m || typeof m !== 'object') return undefined;
-                const expression = typeof m.expression === 'string' ? m.expression.trim() : '';
-                if (!expression) return undefined;
-                const metric: MetricReference = { expression };
-                if (typeof m.start === 'string' && m.start.trim()) metric.start = m.start.trim();
-                if (typeof m.end === 'string' && m.end.trim()) metric.end = m.end.trim();
-                const step = normalizeMetricStep(m.step);
-                if (step !== undefined) metric.step = step;
-                if (typeof m.scope === 'string' && m.scope.trim()) metric.scope = m.scope.trim();
-                return metric;
-            })
-            .filter(Boolean) as MetricReference[]
-        : [];
-
-    const logs: LogReference[] = Array.isArray((raw as any).logs)
-        ? ((raw as any).logs as any[])
-            .map((l) => {
-                if (!l || typeof l !== 'object') return undefined;
-                const query = typeof l.query === 'string' ? l.query.trim() : '';
-                if (!query) return undefined;
-                const log: LogReference = { query };
-                if (typeof l.start === 'string' && l.start.trim()) log.start = l.start.trim();
-                if (typeof l.end === 'string' && l.end.trim()) log.end = l.end.trim();
-
-                if (typeof l.service === 'string' && l.service.trim()) log.service = l.service.trim();
-
-                if (typeof l.scope === 'string' && l.scope.trim()) log.scope = l.scope.trim();
-                return log;
-            })
-            .filter(Boolean) as LogReference[]
-        : [];
-
-    const incidents = toStrings((raw as any).incidents);
-    const services = toStrings((raw as any).services);
-    const tickets = toStrings((raw as any).tickets);
-
-    if (incidents.length) refs.incidents = incidents;
-    if (services.length) refs.services = services;
-    if (tickets.length) refs.tickets = tickets;
-    if (metrics.length) refs.metrics = metrics;
-    if (logs.length) refs.logs = logs;
-
-    return Object.keys(refs).length ? refs : undefined;
-}
 
 /**
  * Build references from tool results using domain configurations.
@@ -137,6 +75,19 @@ export function buildReferences(
 
         const toolResult = { result: processedResult, arguments: result.arguments || {} };
 
+        // GLOBAL: Extract service from scope if present (works for any tool)
+        // Many tools (query-incidents, query-metrics, query-logs) use a 'scope' argument
+        const scope = toolResult.arguments.scope as any;
+        if (scope && typeof scope === 'object' && scope.service) {
+            const collectionKey = 'services';
+            if (!entityRefs.has(collectionKey)) {
+                entityRefs.set(collectionKey, new Set<string>());
+            }
+            if (typeof scope.service === 'string' && scope.service.trim()) {
+                entityRefs.get(collectionKey)!.add(scope.service.trim());
+            }
+        }
+
         // Extract simple entity references from arguments
         if (referenceExtraction.argumentPaths) {
             for (const [entityType, paths] of Object.entries(referenceExtraction.argumentPaths)) {
@@ -181,7 +132,9 @@ export function buildReferences(
                         for (const item of items) {
                             if (item && typeof item === 'object' && config.idPaths) {
                                 // Extract ID from each item
-                                const itemIds = extractByPaths(item, config.idPaths);
+                                // idPaths might be like ['$.result.id'] but we need to extract from the item directly
+                                // So convert '$.result.id' to '$.id' or  just try both the full path and a simple '$.id'
+                                const itemIds = extractByPaths({ item }, config.idPaths.map(p => p.replace(/^\$\.result\./, '$.item.')));
                                 for (const id of itemIds) {
                                     if (typeof id === 'string' && id.trim()) {
                                         entityRefs.get(collectionKey)!.add(id.trim());

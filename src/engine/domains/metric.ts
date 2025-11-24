@@ -32,12 +32,13 @@ export const metricDomain: DomainConfig = {
   // Reference extraction & buckets
   referenceExtraction: {
     argumentPaths: {
-      metric: ['$.arguments.expression'],
+      metric: ['$.arguments.expression.metricName'],
     },
     structuredReferences: [
       {
         bucket: 'metrics',
         schema: 'copilot.metricQuery',
+        // Expression is already an object with metricName, aggregation, filters, groupBy
         requiredFields: [{ name: 'expression', path: '$.arguments.expression' }],
         optionalFields: [
           { name: 'start', path: '$.arguments.start' },
@@ -92,6 +93,13 @@ export const metricDomain: DomainConfig = {
       paddingMinutes: 15,
       defaultDurationMinutes: 60,
     },
+    toolDependencies: [
+      {
+        tool: 'query-metrics',
+        dependsOn: ['describe-metrics'],
+        requiresExplicitId: false,
+      },
+    ],
   },
 
   correlation: {

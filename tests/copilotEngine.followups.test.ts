@@ -75,11 +75,17 @@ test('emits references instead of links with ids and ranges for console', async 
           toolCalls: [
             {
               name: 'query-logs',
-              arguments: { query: 'error OR 500', service: 'checkout', start: '2024-01-01T00:00:00Z' } as JsonObject,
+              arguments: {
+                expression: { search: 'error OR exception' },
+                scope: {
+                  service: 'checkout',
+                },
+                start: '2024-01-01T00:00:00Z',
+              } as JsonObject,
             },
             {
               name: 'query-metrics',
-              arguments: { expression: 'latency_p95', scope: 'checkout', step: 60 } as JsonObject,
+              arguments: { expression: { metricName: 'latency_p95' }, scope: { service: 'checkout' }, step: 60 } as JsonObject,
             },
           ],
         };
@@ -124,11 +130,11 @@ test('emits references instead of links with ids and ranges for console', async 
   assert.ok(calls.some((c) => c.name === 'query-logs'), 'should call logs tool');
   assert.ok(calls.some((c) => c.name === 'query-metrics'), 'should call metrics tool');
   // assert.ok(answer.conclusion.includes('log-1'), 'should include log reference'); // Mock doesn't return this in conclusion
-  assert.equal(answer.references?.logs?.[0]?.query, 'error OR 500');
-  assert.equal(answer.references?.logs?.[0]?.service, 'checkout');
+  assert.strictEqual(answer.references?.logs?.[0]?.expression?.search, 'error OR exception');
+  assert.equal(answer.references?.logs?.[0]?.scope?.service, 'checkout');
   assert.equal(answer.references?.logs?.[0]?.start, '2024-01-01T00:00:00Z');
-  assert.equal(answer.references?.metrics?.[0]?.expression, 'latency_p95');
-  assert.equal(answer.references?.metrics?.[0]?.scope, 'checkout');
+  assert.equal(answer.references?.metrics?.[0]?.expression?.metricName, 'latency_p95');
+  assert.equal(answer.references?.metrics?.[0]?.scope?.service, 'checkout');
   assert.equal(answer.references?.metrics?.[0]?.step, 60);
 });
 

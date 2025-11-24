@@ -86,13 +86,16 @@ export class QuestionEngine {
             augmented = validatedCalls.map((v) => v.call);
         }
 
-        // 2. Correct Service Names
+        // 2. Inject missing dependencies based on domain configuration
+        augmented = this.injectMissingDependencies(augmented);
+
+        // 3. Correct Service Names
         if (hasValidLlmPlan) {
             console.log(`[QuestionEngine] Deferring to LLM plan (${augmented.length} call(s))`);
             return this.correctServiceNames(augmented, knownServices);
         }
 
-        // 3. Intent-based Injection
+        // 4. Intent-based Injection
         if (augmented.length === 0) {
             console.log(`[QuestionEngine] LLM returned empty plan, applying heuristics`);
         } else {
@@ -257,5 +260,96 @@ export class QuestionEngine {
         return merged;
     }
 
+    /**
+     * Inject missing dependency tools based on domain configuration.
+     * If a tool depends on another tool that hasn't been called, replace it with the dependency.
+     * This forces the LLM to run discovery tools before querying tools.
+     */
+    private injectMissingDependencies(calls: ToolCall[]): ToolCall[] {
+        const injected: ToolCall[] = [];
+        const callNames = new Set(calls.map(c => c.name));
+
+        for (const call of calls) {
+            const domain = this.registry.getDomainForTool(call.name);
+
+            if (!domain?.followUp?.toolDependencies) {
+                // No dependencies, add the call as-is
+                injected.push(call);
+                continue;
+            }
+
+            let replaced = false;
+
+            // Check each dependency configuration
+            for (const depConfig of domain.followUp.toolDependencies) {
+                // Check if this tool matches the dependency pattern
+                if (!this.matchesPattern(call.name, depConfig.tool)) {
+                    continue;
+                }
+
+                // Check if requiresExplicitId is satisfied
+                if (depConfig.requiresExplicitId && call.arguments?.id) {
+                    continue; // Has explicit ID, no dependency needed
+                }
+
+                // Check if any of the required dependencies are missing
+                for (const depPattern of depConfig.dependsOn) {
+                    const hasDependency = Array.from(callNames).some(name =>
+                        this.matchesPattern(name, depPattern)
+                    );
+
+                    if (!hasDependency) {
+                        // Replace this tool with its dependency
+                        const dependencyCall: ToolCall = {
+                            name: depPattern.replace(/\*/g, ''),
+                            arguments: this.extractDependencyArguments(call),
+                        };
+                        injected.push(dependencyCall);
+                        callNames.add(dependencyCall.name);
+                        console.log(`[QuestionEngine] Replaced ${call.name} with ${dependencyCall.name} (dependency must be satisfied first)`);
+                        replaced = true;
+                        break;
+                    }
+                }
+
+                if (replaced) break;
+            }
+
+            // If not replaced, add the original call
+            if (!replaced) {
+                injected.push(call);
+            }
+        }
+
+        return injected;
+    }
+
+    /**
+     * Extract scope-related arguments from a tool call to pass to dependency tool
+     */
+    private extractDependencyArguments(call: ToolCall): JsonObject {
+        const args: JsonObject = {};
+        const callArgs = call.arguments as any;
+
+        if (callArgs?.scope) {
+            args.scope = callArgs.scope;
+        }
+        if (callArgs?.service) {
+            args.service = callArgs.service;
+        }
+        return args;
+    }
+
+    /**
+     * Check if a tool name matches a pattern (supports wildcards)
+     */
+    private matchesPattern(toolName: string, pattern: string): boolean {
+        if (pattern === toolName) {
+            return true; //  Exact match
+        }
+        // Simple wildcard support: convert * to .*
+        const regexPattern = pattern.replace(/\*/g, '.*');
+        return new RegExp(`^${regexPattern}$`).test(toolName);
+    }
 
 }

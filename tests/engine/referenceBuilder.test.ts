@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { buildReferences, sanitizeReferences } from '../../src/engine/referenceBuilder.js';
+import { buildReferences } from '../../src/engine/referenceBuilder.js';
 import { DomainRegistry } from '../../src/engine/domainRegistry.js';
 import type { DomainConfig, ToolResult } from '../../src/types.js';
+import { incidentDomain } from '../../src/engine/domains/incident.js';
 
 test('buildReferences - extracts incident IDs from arguments', () => {
     const registry = new DomainRegistry();
@@ -70,7 +71,7 @@ test('buildReferences - extracts incident IDs from results', () => {
     const refs = buildReferences(results, registry);
     assert.ok(refs);
     assert.ok(refs.incidents);
-    assert.deepEqual(refs.incidents.sort(), ['INC-1', 'INC-2']);
+    assert.deepEqual(refs.incidents!.sort(), ['INC-1', 'INC-2']);
 });
 
 test('buildReferences - extracts structured metric references', () => {
@@ -103,7 +104,7 @@ test('buildReferences - extracts structured metric references', () => {
         {
             name: 'query-metrics',
             arguments: {
-                expression: 'latency_p95',
+                expression: { metricName: 'latency_p95' },
                 start: '2024-01-01T00:00:00Z',
                 end: '2024-01-01T01:00:00Z',
                 step: 60,
@@ -115,10 +116,10 @@ test('buildReferences - extracts structured metric references', () => {
     const refs = buildReferences(results, registry);
     assert.ok(refs);
     assert.ok(refs.metrics);
-    assert.equal(refs.metrics.length, 1);
-    assert.equal(refs.metrics[0].expression, 'latency_p95');
-    assert.equal(refs.metrics[0].start, '2024-01-01T00:00:00Z');
-    assert.equal(refs.metrics[0].step, 60);
+    assert.equal(refs.metrics!.length, 1);
+    assert.deepEqual(refs.metrics![0].expression, { metricName: 'latency_p95' });
+    assert.equal(refs.metrics![0].start, '2024-01-01T00:00:00Z');
+    assert.equal(refs.metrics![0].step, 60);
 });
 
 test('buildReferences - extracts structured log references', () => {
@@ -134,10 +135,10 @@ test('buildReferences - extracts structured log references', () => {
                 {
                     bucket: 'logs',
                     schema: 'copilot.logQuery',
-                    requiredFields: [{ name: 'query', path: '$.arguments.query' }],
+                    requiredFields: [{ name: 'expression', path: '$.arguments.expression' }],
                     optionalFields: [
                         { name: 'start', path: '$.arguments.start' },
-                        { name: 'service', path: '$.arguments.service' },
+                        { name: 'scope', path: '$.arguments.scope' },
                     ],
                 },
             ],
@@ -150,9 +151,9 @@ test('buildReferences - extracts structured log references', () => {
         {
             name: 'query-logs',
             arguments: {
-                query: 'error OR exception',
+                expression: { search: 'error OR exception' },
                 start: '2024-01-01T00:00:00Z',
-                service: 'api-gateway',
+                scope: { service: 'api-gateway' },
             },
             result: { entries: [] },
         },
@@ -161,9 +162,9 @@ test('buildReferences - extracts structured log references', () => {
     const refs = buildReferences(results, registry);
     assert.ok(refs);
     assert.ok(refs.logs);
-    assert.equal(refs.logs.length, 1);
-    assert.equal(refs.logs[0].query, 'error OR exception');
-    assert.equal(refs.logs[0].service, 'api-gateway');
+    assert.equal(refs.logs!.length, 1);
+    assert.deepEqual(refs.logs![0].expression, { search: 'error OR exception' });
+    assert.equal(refs.logs![0].scope?.service, 'api-gateway');
 });
 
 test('buildReferences - handles missing required fields', () => {
@@ -236,9 +237,9 @@ test('buildReferences - deduplicates entity IDs', () => {
     const refs = buildReferences(results, registry);
     assert.ok(refs);
     assert.ok(refs.services);
-    assert.equal(refs.services.length, 2);
-    assert.ok(refs.services.includes('api-gateway'));
-    assert.ok(refs.services.includes('payment-service'));
+    assert.equal(refs.services!.length, 2);
+    assert.ok(refs.services!.includes('api-gateway'));
+    assert.ok(refs.services!.includes('payment-service'));
 });
 
 test('buildReferences - handles tools without domain configuration', () => {
@@ -263,60 +264,29 @@ test('buildReferences - returns undefined for empty results', () => {
     assert.ok(!refs);
 });
 
-test('sanitizeReferences - validates and sanitizes metric references', () => {
-    const raw = {
-        metrics: [
-            { expression: 'latency_p95', start: '2024-01-01T00:00:00Z', step: '60' },
-            { expression: 'cpu_usage', step: 30 },
-            { expression: '' }, // Invalid - empty expression
-            { notAnExpression: 'invalid' }, // Invalid - missing expression
-        ],
-    };
+test('buildReferences - extracts service from scope argument globally', () => {
+    // Setup registry with incident domain (which doesn't have explicit service extraction from scope)
+    const registry = new DomainRegistry();
+    registry.register(incidentDomain);
 
-    const refs = sanitizeReferences(raw);
-    assert.ok(refs);
-    assert.ok(refs.metrics);
-    assert.equal(refs.metrics.length, 2);
-    assert.equal(refs.metrics[0].expression, 'latency_p95');
-    assert.equal(refs.metrics[0].step, 60); // Normalized string to number
-    assert.equal(refs.metrics[1].expression, 'cpu_usage');
-    assert.equal(refs.metrics[1].step, 30);
-});
+    const results: ToolResult[] = [
+        {
+            name: 'query-incidents',
+            arguments: {
+                scope: {
+                    service: 'payment-service',
+                    environment: 'prod'
+                }
+            },
+            result: {
+                incidents: []
+            }
+        }
+    ];
 
-test('sanitizeReferences - validates and sanitizes log references', () => {
-    const raw = {
-        logs: [
-            { query: 'error OR exception', service: 'api-gateway' },
-            { query: 'timeout' },
-            { query: '' }, // Invalid - empty query
-            {}, // Invalid - missing query
-        ],
-    };
+    const refs = buildReferences(results, registry);
 
-    const refs = sanitizeReferences(raw);
-    assert.ok(refs);
-    assert.ok(refs.logs);
-    assert.equal(refs.logs.length, 2);
-    assert.equal(refs.logs[0].query, 'error OR exception');
-    assert.equal(refs.logs[0].service, 'api-gateway');
-    assert.equal(refs.logs[1].query, 'timeout');
-});
-
-test('sanitizeReferences - handles simple string arrays', () => {
-    const raw = {
-        incidents: ['INC-1', 'INC-2', '  INC-3  '],
-        services: ['api', '', 'payment'], // Empty string should be filtered
-    };
-
-    const refs = sanitizeReferences(raw);
-    assert.ok(refs);
-    assert.deepEqual(refs.incidents, ['INC-1', 'INC-2', 'INC-3']);
-    assert.deepEqual(refs.services, ['api', 'payment']); // Empty filtered out
-});
-
-test('sanitizeReferences - returns undefined for empty/invalid input', () => {
-    assert.ok(!sanitizeReferences(null));
-    assert.ok(!sanitizeReferences(undefined));
-    assert.ok(!sanitizeReferences({}));
-    assert.ok(!sanitizeReferences('not an object'));
+    assert.ok(refs, 'References should be defined');
+    assert.ok(refs.services, 'Services bucket should be defined');
+    assert.ok(refs.services.includes('payment-service'), 'Should contain payment-service');
 });
