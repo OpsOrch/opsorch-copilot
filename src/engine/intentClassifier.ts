@@ -170,6 +170,7 @@ export class IntentClassifier {
         switch (domainName) {
             case 'log':
             case 'metric':
+            case 'alert':
                 return 'observability';
             case 'incident':
             case 'ticket':

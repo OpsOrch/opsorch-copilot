@@ -55,18 +55,18 @@ test('ScopeInferer: infers environment from question', () => {
 
   assert.ok(inference);
   assert.equal(inference.scope.environment, 'production');
-  assert.equal(inference.confidence, 0.7);
+  assert.equal(inference.confidence, 0.6);
   assert.equal(inference.source, 'question');
 });
 
-test('ScopeInferer: infers region from question', () => {
+test('ScopeInferer: infers team from question', () => {
   const inferer = new ScopeInferer(domainRegistry);
 
-  const inference = inferer.inferScope('check metrics in us-east-1', []);
+  const inference = inferer.inferScope('check metrics for the platform team', []);
 
   assert.ok(inference);
-  assert.equal(inference.scope.region, 'us-east-1');
-  assert.equal(inference.confidence, 0.9);
+  assert.equal(inference.scope.team, 'platform');
+  assert.equal(inference.confidence, 0.6);
   assert.equal(inference.source, 'question');
 });
 
@@ -310,60 +310,17 @@ test('ScopeInferer: extracts service from metric query arguments', () => {
   assert.equal(inference.source, 'previous_query');
 });
 
-test('ScopeInferer: detects all AWS and Google Cloud regions', () => {
+test('ScopeInferer: detects multiple team references', () => {
   const inferer = new ScopeInferer(domainRegistry);
+  const teams = ['platform', 'core-infra', 'payments', 'sre'];
 
-  // All real AWS regions
-  const awsRegions = [
-    'us-east-1', 'us-east-2', 'us-west-1', 'us-west-2',
-    'af-south-1',
-    'ap-east-1', 'ap-northeast-1', 'ap-northeast-2', 'ap-northeast-3',
-    'ap-south-1', 'ap-south-2',
-    'ap-southeast-1', 'ap-southeast-2', 'ap-southeast-3', 'ap-southeast-4',
-    'ca-central-1', 'ca-west-1',
-    'cn-north-1', 'cn-northwest-1',
-    'eu-central-1', 'eu-central-2',
-    'eu-north-1',
-    'eu-south-1', 'eu-south-2',
-    'eu-west-1', 'eu-west-2', 'eu-west-3',
-    'il-central-1',
-    'me-south-1', 'me-central-1',
-    'mx-central-1',
-    'sa-east-1'
-  ];
-
-  // All real Google Cloud regions
-  const gcpRegions = [
-    'us-central1', 'us-east1', 'us-east4', 'us-east5',
-    'us-south1', 'us-west1', 'us-west2', 'us-west3', 'us-west4',
-    'northamerica-northeast1', 'northamerica-northeast2',
-    'southamerica-east1', 'southamerica-west1',
-    'europe-central2', 'europe-north1', 'europe-southwest1',
-    'europe-west1', 'europe-west2', 'europe-west3', 'europe-west4',
-    'europe-west6', 'europe-west8', 'europe-west9', 'europe-west10', 'europe-west12',
-    'asia-south1', 'asia-south2',
-    'asia-southeast1', 'asia-southeast2',
-    'asia-east1', 'asia-east2',
-    'asia-northeast1', 'asia-northeast2', 'asia-northeast3',
-    'australia-southeast1', 'australia-southeast2',
-    'africa-south1'
-  ];
-
-  const allRegions = [...awsRegions, ...gcpRegions];
-
-  // Test each region is detected
-  for (const region of allRegions) {
-    const question = `check metrics in ${region}`;
+  for (const team of teams) {
+    const question = `get incidents for the ${team} team`;
     const inference = inferer.inferScope(question, []);
 
-    assert.ok(inference, `Should detect region: ${region}`);
-    assert.equal(inference.scope.region, region, `Region mismatch for: ${region}`);
-    assert.equal(inference.confidence, 0.9);
+    assert.ok(inference, `Should detect team: ${team}`);
+    assert.equal(inference.scope.team, team);
+    assert.equal(inference.confidence, 0.6);
     assert.equal(inference.source, 'question');
   }
-
-  // Test case insensitivity - regex matches case-insensitively but returns lowercase
-  const inference = inferer.inferScope('show logs in US-EAST-1', []);
-  assert.ok(inference);
-  assert.equal(inference.scope.region, 'us-east-1'); // Regex extracts as lowercase
 });

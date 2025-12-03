@@ -72,14 +72,14 @@ export class ScopeInferer {
         }
       }
 
-      // Extract region from configured paths
-      if (domain.scope.regionFields) {
-        const regions = extractByPaths(
+      // Extract team from configured paths
+      if (domain.scope.teamFields) {
+        const teams = extractByPaths(
           { result: result.result, arguments: result.arguments || {} },
-          domain.scope.regionFields
+          domain.scope.teamFields
         );
-        if (regions.length > 0 && typeof regions[0] === 'string') {
-          scope.region = regions[0];
+        if (teams.length > 0 && typeof teams[0] === 'string') {
+          scope.team = teams[0];
           hasScope = true;
         }
       }
@@ -114,10 +114,10 @@ export class ScopeInferer {
       hasScope = true;
     }
 
-    // Extract region
-    const regionMatch = question.match(/\b(us-east-1|us-west-2|eu-west-1|ap-southeast-1)\b/i);
-    if (regionMatch) {
-      scope.region = regionMatch[1];
+    // Extract team references (e.g., "platform team")
+    const teamMatch = question.match(/\b([a-z0-9_-]+)\s+team\b/i);
+    if (teamMatch) {
+      scope.team = teamMatch[1].toLowerCase();
       hasScope = true;
     }
 
@@ -160,8 +160,8 @@ export class ScopeInferer {
         mergedScope.environment = inference.scope.environment;
         hasChanges = true;
       }
-      if (inference.scope.region && !mergedScope.region) {
-        mergedScope.region = inference.scope.region;
+      if (inference.scope.team && !mergedScope.team) {
+        mergedScope.team = inference.scope.team;
         hasChanges = true;
       }
 
@@ -190,7 +190,7 @@ export class ScopeInferer {
     }
 
     // Consider it explicit if it has any scope fields
-    return !!(scope.service || scope.environment || scope.region);
+    return !!(scope.service || scope.environment || scope.team);
   }
 
 }

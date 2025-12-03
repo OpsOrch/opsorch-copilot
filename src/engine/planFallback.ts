@@ -24,8 +24,11 @@ export function inferPlanFromQuestion(question: string): ToolCall[] {
       arguments: { expression: 'latency_p95, cpu_usage, memory_usage, rps', start: '{{start}}', end: '{{end}}', step: 60 },
     });
   }
-  if (q.includes('ticket') || q.includes('jira') || q.includes('alert')) {
+  if (q.includes('ticket') || q.includes('jira')) {
     calls.push({ name: 'query-tickets', arguments: { query: '{{incidentId}}' } });
+  }
+  if (q.includes('alert') || q.includes('page') || q.includes('pagerduty') || q.includes('detector')) {
+    calls.push({ name: 'query-alerts', arguments: { scope: { service: '{{service}}' }, limit: 5 } });
   }
   if (q.includes('service')) {
     calls.push({ name: 'query-services', arguments: {} });

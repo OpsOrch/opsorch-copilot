@@ -54,6 +54,7 @@ export const metricDomain: DomainConfig = {
   scope: {
     serviceFields: ['$.arguments.scope.service', '$.arguments.service'],
     environmentFields: ['$.arguments.scope.environment', '$.arguments.environment'],
+    teamFields: ['$.arguments.scope.team'],
   },
 
   intent: {

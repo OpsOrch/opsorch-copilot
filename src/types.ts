@@ -48,7 +48,8 @@ export type CopilotReferences = {
   services?: string[];             // service slugs/names
   metrics?: MetricReference[];     // metric expressions + windows
   logs?: LogReference[];           // log scopes + windows
-  tickets?: string[];              // ticket/alert IDs
+  tickets?: string[];              // ticket IDs
+  alerts?: string[];               // alert IDs
 };
 
 export type MetricReference = {
@@ -172,7 +173,7 @@ export interface TimelineSummary {
 export interface QueryScope {
   service?: string;
   environment?: string;
-  region?: string;
+  team?: string;
 }
 
 export interface ScopeInference {
@@ -332,7 +333,7 @@ export interface ReferenceExtractionConfig {
 export interface ScopeConfig {
   serviceFields?: string[];        // JSON paths to service fields
   environmentFields?: string[];    // JSON paths to environment fields
-  regionFields?: string[];         // JSON paths to region fields
+  teamFields?: string[];           // JSON paths to team fields
 }
 
 /**

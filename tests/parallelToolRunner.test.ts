@@ -64,20 +64,6 @@ test('ParallelToolRunner: identifies get-ticket dependency on query-tickets', ()
   assert.deepEqual(dependencies[1].dependsOn, ['query-tickets']);
 });
 
-test('ParallelToolRunner: identifies update dependency on get operation', () => {
-  const runner = new ParallelToolRunner(domainRegistry);
-  const calls: ToolCall[] = [
-    { name: 'get-incident', arguments: { id: 'INC-123' } },
-    { name: 'update-incident', arguments: { id: 'INC-123', status: 'resolved' } },
-  ];
-
-  const dependencies = runner.analyzeDependencies(calls);
-
-  assert.equal(dependencies.length, 2);
-  assert.deepEqual(dependencies[0].dependsOn, []);
-  assert.deepEqual(dependencies[1].dependsOn, ['get-incident']);
-});
-
 test('ParallelToolRunner: can execute independent tools in parallel', () => {
   const runner = new ParallelToolRunner(domainRegistry);
   const calls: ToolCall[] = [

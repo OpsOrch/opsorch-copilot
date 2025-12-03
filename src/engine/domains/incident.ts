@@ -10,8 +10,6 @@ export const incidentDomain: DomainConfig = {
     { match: 'query-incidents', type: 'exact', priority: 100 },
     { match: 'get-incident', type: 'exact', priority: 90 },
     { match: 'get-incident-timeline', type: 'exact', priority: 90 },
-    { match: 'create-incident', type: 'exact', priority: 80 },
-    { match: 'update-incident', type: 'exact', priority: 80 },
   ],
 
   // Entity extraction
@@ -79,6 +77,12 @@ export const incidentDomain: DomainConfig = {
       '$.result.incidents[0].environment',
       '$.result.data[0].environment',
     ],
+    teamFields: [
+      '$.arguments.scope.team',
+      '$.result.team',
+      '$.result.incidents[0].team',
+      '$.result.data[0].team',
+    ],
   },
 
   // Intent classification
@@ -122,11 +126,6 @@ export const incidentDomain: DomainConfig = {
         tool: 'get-incident-timeline',
         dependsOn: ['query-incidents', 'get-incident'],
         requiresExplicitId: true,
-      },
-      {
-        tool: 'update-incident',
-        dependsOn: ['get-incident'],
-        requiresExplicitId: false,
       },
     ],
     keywordExtraction: {

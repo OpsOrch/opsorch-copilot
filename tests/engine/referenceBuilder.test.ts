@@ -242,6 +242,45 @@ test('buildReferences - deduplicates entity IDs', () => {
     assert.ok(refs.services!.includes('payment-service'));
 });
 
+test('buildReferences - extracts alert IDs into alerts bucket', () => {
+    const registry = new DomainRegistry();
+    const alertDomainConfig: DomainConfig = {
+        name: 'alert',
+        version: '1.0.0',
+        toolPatterns: [{ match: 'query-alerts', type: 'exact' }],
+        entities: [{ type: 'alert', idPaths: ['$.result.id'], collectionKey: 'alerts' }],
+        references: [],
+        referenceExtraction: {
+            resultPaths: {
+                alert: {
+                    idPaths: ['$.result.alerts[*].id'],
+                    arrayPaths: ['$.result.alerts[*]'],
+                },
+            },
+        },
+    };
+
+    registry.register(alertDomainConfig);
+
+    const results: ToolResult[] = [
+        {
+            name: 'query-alerts',
+            arguments: {},
+            result: {
+                alerts: [
+                    { id: 'ALERT-1', title: 'CPU high' },
+                    { id: 'ALERT-2', title: 'Error spike' },
+                ],
+            },
+        },
+    ];
+
+    const refs = buildReferences(results, registry);
+    assert.ok(refs);
+    assert.ok(refs.alerts);
+    assert.deepEqual(refs.alerts!.sort(), ['ALERT-1', 'ALERT-2']);
+});
+
 test('buildReferences - handles tools without domain configuration', () => {
     const registry = new DomainRegistry();
 

@@ -154,10 +154,11 @@ export async function synthesizeCopilotAnswer(
 
       const deduped: any = {};
 
-      // Deduplicate simple arrays (incidents, services, tickets)
+      // Deduplicate simple arrays (incidents, services, tickets, alerts)
       if (refs.incidents) deduped.incidents = [...new Set(refs.incidents)];
       if (refs.services) deduped.services = [...new Set(refs.services)];
       if (refs.tickets) deduped.tickets = [...new Set(refs.tickets)];
+      if (refs.alerts) deduped.alerts = [...new Set(refs.alerts)];
 
       // Deduplicate metrics by expression+start+end
       if (refs.metrics?.length) {
@@ -207,6 +208,9 @@ export async function synthesizeCopilotAnswer(
       if (parsed.references.tickets) {
         mergedReferences.tickets = [...(mergedReferences.tickets || []), ...parsed.references.tickets];
       }
+      if (parsed.references.alerts) {
+        mergedReferences.alerts = [...(mergedReferences.alerts || []), ...parsed.references.alerts];
+      }
       // We generally don't trust LLM for structured metrics/logs as they need complex objects
     }
 
@@ -232,6 +236,9 @@ export async function synthesizeCopilotAnswer(
     }
     if (mergedReferences.tickets) {
       mergedReferences.tickets = normalizeToIds(mergedReferences.tickets, 'id');
+    }
+    if (mergedReferences.alerts) {
+      mergedReferences.alerts = normalizeToIds(mergedReferences.alerts, 'id');
     }
 
     const finalReferences = deduplicateReferences(mergedReferences);

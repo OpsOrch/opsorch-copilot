@@ -232,7 +232,7 @@ function validateCommonPatterns(toolName: string, args: Record<string, any>): Va
   if (args.scope && typeof args.scope === 'object') {
     const scopeFields = Object.keys(args.scope).filter(k => args.scope[k] !== undefined);
     if (scopeFields.length === 0) {
-      warnings.push(`'scope' is empty. Specify at least one field (service, environment, region) for better filtering.`);
+      warnings.push(`'scope' is empty. Specify at least one field (service, environment, team) for better filtering.`);
     }
   }
 
@@ -279,5 +279,4 @@ function getRequiredFieldError(toolName: string, field: string): string {
 
   return `Missing required field: '${field}'`;
 }
-
 

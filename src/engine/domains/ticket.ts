@@ -24,8 +24,6 @@ export const ticketDomain: DomainConfig = {
   toolPatterns: [
     { match: 'query-tickets', type: 'exact', priority: 100 },
     { match: 'get-ticket', type: 'exact', priority: 90 },
-    { match: 'create-ticket', type: 'exact', priority: 80 },
-    { match: 'update-ticket', type: 'exact', priority: 80 },
   ],
 
   entities: [
@@ -71,7 +69,9 @@ export const ticketDomain: DomainConfig = {
   },
 
   scope: {
-    serviceFields: ['$.result.service', '$.result.serviceId'],
+    serviceFields: ['$.result.service', '$.result.serviceId', '$.arguments.scope.service'],
+    environmentFields: ['$.arguments.scope.environment'],
+    teamFields: ['$.arguments.scope.team'],
   },
 
   intent: {

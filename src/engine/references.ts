@@ -37,6 +37,7 @@ export function buildReferences(results: ToolResult[], registry: DomainRegistry 
   const incidents = new Set<string>();
   const services = new Set<string>();
   const tickets = new Set<string>();
+  const alerts = new Set<string>();
   const metrics: MetricReference[] = [];
   const logs: LogReference[] = [];
 
@@ -68,6 +69,11 @@ export function buildReferences(results: ToolResult[], registry: DomainRegistry 
     if (domain.name === 'ticket') {
       if (args.id) tickets.add(String(args.id).trim());
       if (args.ticketId) tickets.add(String(args.ticketId).trim());
+    }
+
+    if (domain.name === 'alert') {
+      if (args.id) alerts.add(String(args.id).trim());
+      if (args.alertId) alerts.add(String(args.alertId).trim());
     }
 
     if (domain.name === 'metric') {
@@ -107,6 +113,7 @@ export function buildReferences(results: ToolResult[], registry: DomainRegistry 
   if (incidents.size) refs.incidents = Array.from(incidents);
   if (services.size) refs.services = Array.from(services);
   if (tickets.size) refs.tickets = Array.from(tickets);
+  if (alerts.size) refs.alerts = Array.from(alerts);
   if (metrics.length) refs.metrics = metrics;
   if (logs.length) refs.logs = logs;
 

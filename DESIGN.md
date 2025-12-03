@@ -3,7 +3,7 @@
 Purpose: define how Copilot answers OpsOrch operational questions using only `opsorch-mcp` tools and an LLM that plans, calls tools, and summarizes results.
 
 ## Goals
-- Use MCP tools (no direct Core calls) to gather incidents, timelines, tickets/alerts, logs, metrics, and services.
+- Use MCP tools (no direct Core calls) to gather incidents, timelines, tickets, alerts, logs, metrics, and services.
 - Support the common questions catalog (summaries, severity triggers, similar incidents, deploy correlation, logs/metrics drill, causal hints).
 - Keep answers short, with evidence (IDs, time ranges, trends) and uncertainty when data is missing.
 
@@ -21,7 +21,8 @@ Purpose: define how Copilot answers OpsOrch operational questions using only `op
 
 ## Tool usage patterns
 - Incidents: `query-incidents` (filter by severity/recency/service) → per incident `get-incident` + `get-incident-timeline` to find severity changes, deploy notes, IDs (PagerDuty/Jira IDs in fields/metadata/body).
-- Tickets/alerts: `query-tickets` (by incident/service keywords); `get-ticket` if needed for details.
+- Tickets: `query-tickets` (by incident/service keywords); `get-ticket` if needed for details.
+- Alerts: `query-alerts` for detector or paging context; `get-alert` if exposed via MCP in the future.
 - Services: `query-services`/`list-services` to identify dependencies and similar services for related incidents.
 - Logs: `query-logs` with service scope and time windows (incident window and pre/post). Focused queries for 500s/error patterns; compare counts and top patterns when possible.
 - Metrics: `query-metrics` for latency (p95/p99), CPU, memory, RPS. Compare aligned windows to test correlations and find anomalies.
@@ -40,8 +41,8 @@ Purpose: define how Copilot answers OpsOrch operational questions using only `op
 
 ## Answer format
 - Short conclusion up front.
-- Evidence: incident IDs, severity/status, timestamps, key timeline events, metric/ log highlights, ticket/alert IDs.
-- References object (instead of raw links): incidents[], metrics[{expression,start/end/step}], logs[{query,start/end,service}], tickets[], services[]. Console turns these into clickable deep links.
+- Evidence: incident IDs, severity/status, timestamps, key timeline events, metric/log highlights, ticket IDs, alert IDs.
+- References object (instead of raw links): incidents[], metrics[{expression,start/end/step}], logs[{query,start/end,service}], tickets[], alerts[], services[]. Console turns these into clickable deep links.
 - Note gaps (e.g., missing provider data) and suggest the next query only when necessary.
 
 ## Configuration
@@ -89,4 +90,3 @@ Start the full stack for end-to-end testing:
 4. Start Console: `cd ../opsorch-console && npm run dev`
 
 Test via Console UI or direct API calls to `http://localhost:6060/chat`
-

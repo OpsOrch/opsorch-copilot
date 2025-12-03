@@ -53,6 +53,7 @@ export const logDomain: DomainConfig = {
   scope: {
     serviceFields: ['$.arguments.service', '$.arguments.scope.service'],
     environmentFields: ['$.arguments.scope.environment', '$.arguments.environment'],
+    teamFields: ['$.arguments.scope.team'],
   },
 
   intent: {

@@ -1,5 +1,6 @@
 import { domainRegistry } from './domainRegistry.js';
 import {
+  alertDomain,
   incidentDomain,
   metricDomain,
   logDomain,
@@ -18,6 +19,7 @@ export class DomainConfigLoader {
    */
   loadBuiltInDomains(): void {
     const domains: DomainConfig[] = [
+      alertDomain,
       incidentDomain,
       metricDomain,
       logDomain,

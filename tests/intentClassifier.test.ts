@@ -33,6 +33,13 @@ test('classifyIntent detects direct metrics request', () => {
     assert.ok(result.suggestedTools.includes('query-metrics'));
 });
 
+test('classifyIntent detects alert feed request', () => {
+    const result = classifyIntent('show me the latest alerts', makeContext(), domainRegistry);
+    assert.equal(result.intent, 'observability');
+    assert.ok(result.confidence >= 0.5);
+    assert.ok(result.suggestedTools.includes('query-alerts'));
+});
+
 test('classifyIntent detects direct incidents request', () => {
     const result = classifyIntent('list recent incidents', makeContext(), domainRegistry);
     assert.equal(result.intent, 'investigation');

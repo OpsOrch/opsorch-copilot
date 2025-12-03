@@ -44,6 +44,7 @@ export const serviceDomain: DomainConfig = {
   scope: {
     serviceFields: ['$.result.name', '$.result.serviceName', '$.result.id'],
     environmentFields: ['$.result.environment', '$.result.env'],
+    teamFields: ['$.result.team', '$.result.owner'],
   },
 
   intent: {

@@ -1,3 +1,4 @@
+export { alertDomain } from './alert.js';
 export { incidentDomain } from './incident.js';
 export { metricDomain } from './metric.js';
 export { logDomain } from './log.js';
