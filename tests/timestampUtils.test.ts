@@ -83,7 +83,7 @@ test('timestampUtils', async (t) => {
             assert.ok(!isValidISO8601('2024-01-01'));
             assert.ok(!isValidISO8601('not-a-date'));
             assert.ok(!isValidISO8601('10:00:00'));
-            assert.ok(!isValidISO8601(123 as any));
+            assert.ok(!isValidISO8601(123 as unknown as string));
         });
     });
 

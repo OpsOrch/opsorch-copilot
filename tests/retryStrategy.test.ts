@@ -3,10 +3,10 @@ import { test } from 'node:test';
 import { withRetry, isTransientError, RetryableError, CircuitBreakerError } from '../src/engine/retryStrategy.js';
 
 test('retries on transient network errors', async () => {
-    let attempts = 0;
+    let callCount = 0;
     const fn = async () => {
-        attempts++;
-        if (attempts < 3) {
+        callCount++;
+        if (callCount < 3) {
             throw new Error('ECONNRESET: connection reset');
         }
         return 'success';
@@ -14,7 +14,7 @@ test('retries on transient network errors', async () => {
 
     const result = await withRetry(fn, { maxRetries: 3, baseDelayMs: 10 }, 'test-network-1');
     assert.equal(result, 'success');
-    assert.equal(attempts, 3);
+    assert.equal(callCount, 3);
 });
 
 test('does not retry on non-transient errors', async () => {
@@ -56,10 +56,8 @@ test('identifies transient errors correctly', () => {
 });
 
 test('circuit breaker opens after threshold failures', async () => {
-    let attempts = 0;
     const context = 'test-circuit-breaker-1';
     const fn = async () => {
-        attempts++;
         throw new Error('503 Service Unavailable');
     };
 
@@ -67,7 +65,7 @@ test('circuit breaker opens after threshold failures', async () => {
     for (let i = 0; i < 5; i++) {
         try {
             await withRetry(fn, { maxRetries: 0, baseDelayMs: 10 }, context);
-        } catch (err) {
+        } catch {
             // Expected to fail
         }
     }

@@ -20,9 +20,6 @@ const SERVICE_NAMES = [
   'recommendation', 'fraud-detection'
 ];
 
-const ENVIRONMENTS = ['prod', 'production', 'staging'];
-const REGIONS = ['us-east-1', 'us-west-2', 'eu-west-1', 'ap-southeast-1'];
-
 function generateServiceName(): string {
   const prefix = randomChoice(SERVICE_PREFIXES);
   const name = randomChoice(SERVICE_NAMES);
@@ -163,7 +160,6 @@ const TEMPLATES = [
   {
     name: (service: string) => `Connection pool exhaustion in ${service}`,
     turns: (service: string, timestamp: number): ConversationTurn[] => {
-      const incidentId = generateIncidentId();
       const incidentTime = new Date(timestamp);
 
       return [
@@ -357,7 +353,6 @@ const TEMPLATES = [
   {
     name: (service: string) => `Cache invalidation storm overwhelming ${service}`,
     turns: (service: string, timestamp: number): ConversationTurn[] => {
-      const incidentId = generateIncidentId();
       const incidentTime = new Date(timestamp);
 
       return [
@@ -567,7 +562,6 @@ const TEMPLATES = [
   {
     name: (service: string) => `Post-deployment error spike requiring rollback in ${service}`,
     turns: (service: string, timestamp: number): ConversationTurn[] => {
-      const incidentId = generateIncidentId();
 
       return [
         {

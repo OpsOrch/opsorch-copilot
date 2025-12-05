@@ -45,8 +45,8 @@ describe('Store Factory', () => {
         // Cleanup temp directory
         try {
             rmSync(tempDir, { recursive: true, force: true });
-        } catch (error) {
-            console.error('Error cleaning up temp directory:', error);
+        } catch {
+            // Ignore cleanup errors
         }
     });
 
@@ -125,7 +125,7 @@ describe('Store Factory', () => {
         // Clean up default database file
         try {
             rmSync('./data', { recursive: true, force: true });
-        } catch (error) {
+        } catch {
             // Ignore cleanup errors
         }
     });

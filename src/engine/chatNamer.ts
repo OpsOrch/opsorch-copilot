@@ -1,6 +1,4 @@
-export interface ChatNamerConfig {
-  maxLength: number;
-}
+import { ChatNamerConfig, Entity } from "../types.js";
 
 interface ExtractedEntities {
   incidents: string[];
@@ -24,21 +22,39 @@ export class ChatNamer {
   generateName(
     userMessage: string,
     llmResponse: string,
-    timestamp: number
+    timestamp: number,
+    knownEntities: Entity[] = [],
   ): string {
     const startTime = Date.now();
 
-    // Extract entities from both user message and LLM response
+    // Context from extracted entities
+    const knownIncidents = knownEntities
+      .filter((e) => e.type === "incident")
+      .map((e) => e.value);
+
+    const knownServices = knownEntities
+      .filter((e) => e.type === "service")
+      .map((e) => e.value);
+
+    // Context from parsing (for types not covered by Entity handlers yet, like metrics/topics)
     const responseEntities = this.extractEntitiesFromResponse(llmResponse);
     const userEntities = this.extractEntitiesFromResponse(userMessage);
 
-    // Merge entities (prioritize response entities, then user entities)
+    // Merge entities
     const mergedEntities: ExtractedEntities = {
       incidents: [
-        ...new Set([...responseEntities.incidents, ...userEntities.incidents]),
+        ...new Set([
+          ...knownIncidents,
+          ...responseEntities.incidents,
+          ...userEntities.incidents,
+        ]),
       ],
       services: [
-        ...new Set([...responseEntities.services, ...userEntities.services]),
+        ...new Set([
+          ...knownServices,
+          ...responseEntities.services,
+          ...userEntities.services,
+        ]),
       ],
       metrics: [
         ...new Set([...responseEntities.metrics, ...userEntities.metrics]),
@@ -70,7 +86,7 @@ export class ChatNamer {
 
     // Log the result
     const executionTime = Date.now() - startTime;
-    console.log('[ChatNamer]', {
+    console.log("[ChatNamer]", {
       name: sanitizedName,
       entities: mergedEntities,
       intent,
@@ -95,8 +111,12 @@ export class ChatNamer {
     }
 
     return {
-      incidents: this.extractIncidents(response),
-      services: this.extractServices(response),
+      incidents: [], // Handled by knownEntities mostly, keeping empty for interface compatibility or if we want to keep regex as backup?
+      // The user wants to use handlers. I will remove strict regex parsing for incidents/services from here to force reliance on handlers,
+      // BUT 'metrics', 'topics', 'timeRanges' are NOT in Entity type, so they must stay.
+      // Actually, for safety, I will perform a lighter regex or just empty for incidents/services to rely on knownEntities?
+      // If I remove extractIncidents/extractServices entirely, I should return empty arrays here.
+      services: [],
       metrics: this.extractMetrics(response),
       timeRanges: this.extractTimeRanges(response),
       topics: this.extractTopics(response),
@@ -104,54 +124,14 @@ export class ChatNamer {
   }
 
   /**
-   * Extract incident references from text (INC-12345, incident-123, etc.)
+   * Extract incidents - REMOVED (Replaced by Entity handlers)
    */
-  private extractIncidents(text: string): string[] {
-    const incidents: string[] = [];
-
-    // Pattern: INC-12345
-    const incPattern = /INC-\d+/gi;
-    const incMatches = text.match(incPattern);
-    if (incMatches) {
-      incidents.push(...incMatches.map((m) => m.toUpperCase()));
-    }
-
-    // Pattern: incident-123 or incident 123
-    const incidentPattern = /incident[- ]?(\d+)/gi;
-    const incidentMatches = text.matchAll(incidentPattern);
-    for (const match of incidentMatches) {
-      incidents.push(`incident-${match[1]}`);
-    }
-
-    // Pattern: #1234 (at least 4 digits)
-    const hashPattern = /#(\d{4,})/g;
-    const hashMatches = text.matchAll(hashPattern);
-    for (const match of hashMatches) {
-      incidents.push(`#${match[1]}`);
-    }
-
-    // Remove duplicates
-    return [...new Set(incidents)];
-  }
+  // private extractIncidents(text: string): string[] { ... }
 
   /**
-   * Extract service names from text (payment-service, checkout-api, etc.)
+   * Extract services - REMOVED (Replaced by Entity handlers)
    */
-  private extractServices(text: string): string[] {
-    const services: string[] = [];
-
-    // Pattern: service-name, api-name, worker-name, function-name
-    const servicePattern =
-      /\b([a-z][a-z0-9]*(?:-[a-z0-9]+)*)-(?:service|api|worker|job|function)\b/gi;
-    const matches = text.matchAll(servicePattern);
-
-    for (const match of matches) {
-      services.push(match[0].toLowerCase());
-    }
-
-    // Remove duplicates
-    return [...new Set(services)];
-  }
+  // private extractServices(text: string): string[] { ... }
 
   /**
    * Extract metrics from text (CPU, latency, p95, errors, etc.)
@@ -161,29 +141,33 @@ export class ChatNamer {
     const lowerText = text.toLowerCase();
 
     const metricKeywords = [
-      'latency',
-      'cpu',
-      'memory',
-      'error',
-      '5xx',
-      '4xx',
-      'p95',
-      'p99',
-      'p50',
-      'throughput',
-      'request',
-      'response time',
-      'disk',
-      'network',
-      'timeout',
+      "latency",
+      "cpu",
+      "memory",
+      "error",
+      "5xx",
+      "4xx",
+      "p95",
+      "p99",
+      "p50",
+      "throughput",
+      "request",
+      "response time",
+      "disk",
+      "network",
+      "timeout",
     ];
 
     for (const keyword of metricKeywords) {
       if (lowerText.includes(keyword)) {
         // Normalize plural forms
-        const normalized = keyword.endsWith('s') && keyword !== 'p95' && keyword !== 'p99' && keyword !== 'p50'
-          ? keyword.slice(0, -1)
-          : keyword;
+        const normalized =
+          keyword.endsWith("s") &&
+          keyword !== "p95" &&
+          keyword !== "p99" &&
+          keyword !== "p50"
+            ? keyword.slice(0, -1)
+            : keyword;
         if (!metrics.includes(normalized)) {
           metrics.push(normalized);
         }
@@ -201,26 +185,28 @@ export class ChatNamer {
     const lowerText = text.toLowerCase();
 
     const topicKeywords = [
-      'payment',
-      'payments',
-      'checkout',
-      'billing',
-      'order',
-      'orders',
-      'database',
-      'cache',
-      'auth',
-      'authentication',
-      'webhook',
-      'webhooks',
-      'api',
-      'gateway',
+      "payment",
+      "payments",
+      "checkout",
+      "billing",
+      "order",
+      "orders",
+      "database",
+      "cache",
+      "auth",
+      "authentication",
+      "webhook",
+      "webhooks",
+      "api",
+      "gateway",
     ];
 
     for (const keyword of topicKeywords) {
       if (lowerText.includes(keyword)) {
         // Normalize plural forms
-        const normalized = keyword.endsWith('s') ? keyword.slice(0, -1) : keyword;
+        const normalized = keyword.endsWith("s")
+          ? keyword.slice(0, -1)
+          : keyword;
         if (!topics.includes(normalized)) {
           topics.push(normalized);
         }
@@ -242,11 +228,11 @@ export class ChatNamer {
     for (const match of lastMatches) {
       const num = match[1];
       const unit = match[2].toLowerCase();
-      const shortUnit = unit.startsWith('min')
-        ? 'm'
-        : unit.startsWith('h')
-          ? 'h'
-          : 'd';
+      const shortUnit = unit.startsWith("min")
+        ? "m"
+        : unit.startsWith("h")
+          ? "h"
+          : "d";
       timeRanges.push(`Last ${num}${shortUnit}`);
     }
 
@@ -259,7 +245,7 @@ export class ChatNamer {
 
     // Keyword: recent
     if (/\brecent\b/i.test(text)) {
-      timeRanges.push('Recent');
+      timeRanges.push("Recent");
     }
 
     return timeRanges;
@@ -278,7 +264,7 @@ export class ChatNamer {
       /what happened/i.test(lowerMessage) ||
       /root cause/i.test(lowerMessage)
     ) {
-      return 'root-cause';
+      return "root-cause";
     }
 
     // Investigation
@@ -288,7 +274,7 @@ export class ChatNamer {
       /search/i.test(lowerMessage) ||
       /look for/i.test(lowerMessage)
     ) {
-      return 'investigation';
+      return "investigation";
     }
 
     // Correlation
@@ -298,7 +284,7 @@ export class ChatNamer {
       /relationship between/i.test(lowerMessage) ||
       /\bvs\b/i.test(lowerMessage)
     ) {
-      return 'correlation';
+      return "correlation";
     }
 
     // Status check
@@ -308,7 +294,7 @@ export class ChatNamer {
       /status of/i.test(lowerMessage) ||
       /health of/i.test(lowerMessage)
     ) {
-      return 'status-check';
+      return "status-check";
     }
 
     // Troubleshooting
@@ -319,7 +305,7 @@ export class ChatNamer {
       /issue with/i.test(lowerMessage) ||
       /problem with/i.test(lowerMessage)
     ) {
-      return 'troubleshooting';
+      return "troubleshooting";
     }
 
     return null;
@@ -331,22 +317,22 @@ export class ChatNamer {
   private synthesizeName(
     entities: ExtractedEntities,
     intent: string | null,
-    userMessage: string
+    userMessage: string,
   ): string {
     const { incidents, services, metrics, timeRanges, topics } = entities;
 
     // Priority 1: Topic + Multiple Services (e.g., "Payment Checkout and Webhook Issues")
     if (topics.length > 0 && services.length >= 2) {
       const topic = this.formatTopicName(topics[0]);
-      const service1 = this.formatServiceName(services[0]).split(' ')[0]; // Get first word
-      const service2 = this.formatServiceName(services[1]).split(' ')[0];
+      const service1 = this.formatServiceName(services[0]).split(" ")[0]; // Get first word
+      const service2 = this.formatServiceName(services[1]).split(" ")[0];
       return `${topic} ${service1} and ${service2} Issues`;
     }
 
     // Priority 2: Topic + Service + Metric (e.g., "Payment Checkout Latency")
     if (topics.length > 0 && services.length > 0 && metrics.length > 0) {
       const topic = this.formatTopicName(topics[0]);
-      const service = this.formatServiceName(services[0]).split(' ')[0];
+      const service = this.formatServiceName(services[0]).split(" ")[0];
       const metric = this.formatMetricName(metrics[0]);
       return `${topic} ${service} ${metric}`;
     }
@@ -362,7 +348,7 @@ export class ChatNamer {
     // Priority 4: Topic + Service (e.g., "Payment Checkout Issues")
     if (topics.length > 0 && services.length > 0) {
       const topic = this.formatTopicName(topics[0]);
-      const service = this.formatServiceName(services[0]).split(' ')[0];
+      const service = this.formatServiceName(services[0]).split(" ")[0];
       return `${topic} ${service} Issues`;
     }
 
@@ -414,7 +400,7 @@ export class ChatNamer {
     }
 
     // Priority 12: Metric Correlation
-    if (metrics.length >= 2 && intent === 'correlation') {
+    if (metrics.length >= 2 && intent === "correlation") {
       const metric1 = this.formatMetricName(metrics[0]);
       const metric2 = this.formatMetricName(metrics[1]);
       return `${metric1} and ${metric2} Correlation`;
@@ -471,7 +457,7 @@ export class ChatNamer {
     }
 
     // No synthesis possible
-    return '';
+    return "";
   }
 
   private formatTopicName(topic: string): string {
@@ -482,19 +468,19 @@ export class ChatNamer {
   private formatServiceName(service: string): string {
     // Convert "payment-service" to "Payment Service"
     return service
-      .split('-')
+      .split("-")
       .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-      .join(' ');
+      .join(" ");
   }
 
   private formatMetricName(metric: string): string {
     // Convert "cpu" to "CPU", "p95" to "P95", etc.
     const upper = metric.toUpperCase();
     if (
-      upper === 'CPU' ||
-      upper === 'P95' ||
-      upper === 'P99' ||
-      upper === 'P50'
+      upper === "CPU" ||
+      upper === "P95" ||
+      upper === "P99" ||
+      upper === "P50"
     ) {
       return upper;
     }
@@ -503,13 +489,13 @@ export class ChatNamer {
 
   private getIntentLabel(intent: string): string {
     const labels: Record<string, string> = {
-      'root-cause': 'Root Cause',
-      investigation: 'Investigation',
-      correlation: 'Correlation',
-      'status-check': 'Status Check',
-      troubleshooting: 'Troubleshooting',
+      "root-cause": "Root Cause",
+      investigation: "Investigation",
+      correlation: "Correlation",
+      "status-check": "Status Check",
+      troubleshooting: "Troubleshooting",
     };
-    return labels[intent] || 'Analysis';
+    return labels[intent] || "Analysis";
   }
 
   /**
@@ -519,11 +505,11 @@ export class ChatNamer {
     if (!userMessage || userMessage.trim().length === 0) {
       // Use timestamp-based name
       const date = new Date(timestamp);
-      const formatted = date.toLocaleString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        hour: 'numeric',
-        minute: '2-digit',
+      const formatted = date.toLocaleString("en-US", {
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
       });
       return `General Query (${formatted})`;
     }
@@ -545,23 +531,23 @@ export class ChatNamer {
    */
   private sanitizeName(name: string): string {
     // Remove newlines and control characters
-    let sanitized = name.replace(/[\n\r\t]/g, ' ');
+    let sanitized = name.replace(/[\n\r\t]/g, " ");
 
     // Replace multiple spaces with single space
-    sanitized = sanitized.replace(/\s+/g, ' ').trim();
+    sanitized = sanitized.replace(/\s+/g, " ").trim();
 
     // Truncate to maxLength if needed
     if (sanitized.length > this.config.maxLength) {
       // Find a good break point (space) near the limit
       const truncated = sanitized.slice(0, this.config.maxLength - 3);
-      const lastSpace = truncated.lastIndexOf(' ');
+      const lastSpace = truncated.lastIndexOf(" ");
 
       if (lastSpace > this.config.maxLength * 0.7) {
         // Use the space if it's not too far back
-        return truncated.slice(0, lastSpace) + '...';
+        return truncated.slice(0, lastSpace) + "...";
       } else {
         // Just truncate at the limit
-        return truncated + '...';
+        return truncated + "...";
       }
     }
 
@@ -573,26 +559,26 @@ export class ChatNamer {
    */
   private toTitleCase(text: string): string {
     const smallWords = new Set([
-      'a',
-      'an',
-      'and',
-      'as',
-      'at',
-      'but',
-      'by',
-      'for',
-      'in',
-      'of',
-      'on',
-      'or',
-      'the',
-      'to',
-      'with',
+      "a",
+      "an",
+      "and",
+      "as",
+      "at",
+      "but",
+      "by",
+      "for",
+      "in",
+      "of",
+      "on",
+      "or",
+      "the",
+      "to",
+      "with",
     ]);
 
     return text
       .toLowerCase()
-      .split(' ')
+      .split(" ")
       .map((word, index) => {
         // Always capitalize first word
         if (index === 0) {
@@ -605,6 +591,6 @@ export class ChatNamer {
         // Capitalize everything else
         return word.charAt(0).toUpperCase() + word.slice(1);
       })
-      .join(' ');
+      .join(" ");
   }
 }

@@ -20,6 +20,7 @@ export function makeEngine(llm: LlmClient, mcp: StubMcp, overrides?: Partial<Run
   const mockMcp = new MockMcp(mcp.listTools, mcp.callTool);
 
   // Override MCP client with mock for tests (no network).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (engine as any).mcp = mockMcp;
   return engine;
 }

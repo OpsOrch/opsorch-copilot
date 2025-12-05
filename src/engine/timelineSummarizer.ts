@@ -1,4 +1,4 @@
-import { TimelineEvent, TimelineSummary } from '../types.js';
+import { TimelineEvent, TimelineSummary } from "../types.js";
 
 const SUMMARIZATION_THRESHOLD = 20;
 const MAX_KEY_EVENTS = 15;
@@ -19,7 +19,10 @@ export class TimelineSummarizer {
   /**
    * Summarize timeline events
    */
-  summarize(events: TimelineEvent[], maxEvents: number = MAX_KEY_EVENTS): TimelineSummary {
+  summarize(
+    events: TimelineEvent[],
+    maxEvents: number = MAX_KEY_EVENTS,
+  ): TimelineSummary {
     if (!this.needsSummarization(events)) {
       return {
         totalEvents: events.length,
@@ -37,15 +40,19 @@ export class TimelineSummarizer {
 
     // Identify key events
     const keyEvents = this.identifyKeyEvents(sortedEvents);
-    
+
     // Group similar consecutive events
     const groupedEvents = this.groupEvents(sortedEvents);
-    
+
     // Limit key events to maxEvents
     const limitedKeyEvents = keyEvents.slice(0, maxEvents);
-    
-    const omittedCount = Math.max(0, events.length - limitedKeyEvents.length - 
-      groupedEvents.reduce((sum, g) => sum + g.count, 0));
+
+    const omittedCount = Math.max(
+      0,
+      events.length -
+        limitedKeyEvents.length -
+        groupedEvents.reduce((sum, g) => sum + g.count, 0),
+    );
 
     return {
       totalEvents: events.length,
@@ -62,14 +69,14 @@ export class TimelineSummarizer {
   identifyKeyEvents(events: TimelineEvent[]): TimelineEvent[] {
     const keyEvents: TimelineEvent[] = [];
     const keyEventTypes = new Set([
-      'severity_change',
-      'status_change',
-      'deploy',
-      'deployment',
-      'incident_created',
-      'incident_resolved',
-      'escalation',
-      'assignment_change',
+      "severity_change",
+      "status_change",
+      "deploy",
+      "deployment",
+      "incident_created",
+      "incident_resolved",
+      "escalation",
+      "assignment_change",
     ]);
 
     for (const event of events) {
@@ -80,21 +87,25 @@ export class TimelineSummarizer {
       }
 
       // Check if event body contains key indicators
-      const body = event.body?.toLowerCase() || '';
+      const body = event.body?.toLowerCase() || "";
       if (
-        body.includes('severity') ||
-        body.includes('status') ||
-        body.includes('deploy') ||
-        body.includes('escalat') ||
-        body.includes('resolv') ||
-        body.includes('assign')
+        body.includes("severity") ||
+        body.includes("status") ||
+        body.includes("deploy") ||
+        body.includes("escalat") ||
+        body.includes("resolv") ||
+        body.includes("assign")
       ) {
         keyEvents.push(event);
         continue;
       }
 
       // Include user comments (not automated)
-      if (event.actor && typeof event.actor === 'object' && event.actor.type === 'user') {
+      if (
+        event.actor &&
+        typeof event.actor === "object" &&
+        event.actor.type === "user"
+      ) {
         keyEvents.push(event);
       }
     }
@@ -116,18 +127,21 @@ export class TimelineSummarizer {
   /**
    * Group similar consecutive events
    */
-  groupEvents(events: TimelineEvent[]): TimelineSummary['groupedEvents'] {
-    const groups: Map<string, {
-      count: number;
-      firstTimestamp: string;
-      lastTimestamp: string;
-    }> = new Map();
+  groupEvents(events: TimelineEvent[]): TimelineSummary["groupedEvents"] {
+    const groups: Map<
+      string,
+      {
+        count: number;
+        firstTimestamp: string;
+        lastTimestamp: string;
+      }
+    > = new Map();
 
     // Group events by type within time windows
     for (let i = 0; i < events.length; i++) {
       const event = events[i];
       const eventTime = new Date(event.timestamp).getTime();
-      
+
       // Look for similar events within the grouping window
       const groupKey = this.getGroupKey(event);
       if (!groupKey) continue;
@@ -159,10 +173,11 @@ export class TimelineSummarizer {
     }
 
     // Convert to result format, only include groups with multiple events
-    const result: TimelineSummary['groupedEvents'] = [];
+    const result: TimelineSummary["groupedEvents"] = [];
     for (const [key, group] of groups.entries()) {
-      if (group.count >= 3) { // Only group if 3+ similar events
-        const baseKey = key.split('_')[0]; // Remove suffix
+      if (group.count >= 3) {
+        // Only group if 3+ similar events
+        const baseKey = key.split("_")[0]; // Remove suffix
         result.push({
           type: baseKey,
           count: group.count,
@@ -182,35 +197,38 @@ export class TimelineSummarizer {
    */
   private getGroupKey(event: TimelineEvent): string | null {
     const kind = event.kind?.toLowerCase();
-    const body = event.body?.toLowerCase() || '';
+    const body = event.body?.toLowerCase() || "";
 
     // Group notification events
-    if (kind === 'notification' || body.includes('notification')) {
-      return 'notifications';
+    if (kind === "notification" || body.includes("notification")) {
+      return "notifications";
     }
 
     // Group alert events
-    if (kind === 'alert' || body.includes('alert')) {
-      return 'alerts';
+    if (kind === "alert" || body.includes("alert")) {
+      return "alerts";
     }
 
     // Group automated actions
     if (
-      kind === 'automation' ||
-      body.includes('automated') ||
-      body.includes('auto-')
+      kind === "automation" ||
+      body.includes("automated") ||
+      body.includes("auto-")
     ) {
-      return 'automated_actions';
+      return "automated_actions";
     }
 
     // Group status updates (but not changes)
-    if (kind === 'status_update' || (body.includes('status') && !body.includes('change'))) {
-      return 'status_updates';
+    if (
+      kind === "status_update" ||
+      (body.includes("status") && !body.includes("change"))
+    ) {
+      return "status_updates";
     }
 
     // Group monitoring events
-    if (kind === 'monitoring' || body.includes('monitor')) {
-      return 'monitoring_events';
+    if (kind === "monitoring" || body.includes("monitor")) {
+      return "monitoring_events";
     }
 
     // Don't group key events
@@ -225,23 +243,27 @@ export class TimelineSummarizer {
 
     // Key events
     if (summary.keyEvents.length > 0) {
-      formatted += 'Key Events:\n';
+      formatted += "Key Events:\n";
       for (const event of summary.keyEvents) {
         const time = new Date(event.timestamp).toISOString().substring(11, 19); // HH:MM:SS
         formatted += `- ${time}: ${event.kind} - ${event.body}\n`;
       }
-      formatted += '\n';
+      formatted += "\n";
     }
 
     // Grouped events
     if (summary.groupedEvents.length > 0) {
-      formatted += 'Grouped Events:\n';
+      formatted += "Grouped Events:\n";
       for (const group of summary.groupedEvents) {
-        const startTime = new Date(group.timeRange.start).toISOString().substring(11, 19);
-        const endTime = new Date(group.timeRange.end).toISOString().substring(11, 19);
+        const startTime = new Date(group.timeRange.start)
+          .toISOString()
+          .substring(11, 19);
+        const endTime = new Date(group.timeRange.end)
+          .toISOString()
+          .substring(11, 19);
         formatted += `- ${group.count} ${group.type} (${startTime} - ${endTime})\n`;
       }
-      formatted += '\n';
+      formatted += "\n";
     }
 
     if (summary.omittedCount > 0) {

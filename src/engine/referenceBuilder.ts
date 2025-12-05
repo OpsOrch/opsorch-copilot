@@ -1,221 +1,264 @@
 import {
-    CopilotReferences,
-    ToolResult,
-} from '../types.js';
-import { DomainRegistry } from './domainRegistry.js';
-import { extractByPath, extractByPaths } from './pathExtractor.js';
-import { normalizeMetricStep } from './metricUtils.js';
+  CopilotReferences,
+  LogReference,
+  MetricReference,
+  ToolResult,
+  JsonValue,
+  JsonObject,
+} from "../types.js";
+import { normalizeMetricStep } from "./metricUtils.js";
 
 /**
- * Build references from tool results using domain configurations.
- * This is the main domain-driven reference builder.
- * 
- * @param results - Array of tool results to extract references from
- * @param registry - Domain registry containing domain configurations
- * @returns CopilotReferences object with populated buckets
+ * Collect incident IDs from tool result payload.
+ * Uses MCP incidentSchema field: id (z.string())
+ */
+function collectIncidentIds(payload: JsonValue): string[] {
+  const ids = new Set<string>();
+  const grabId = (candidate: JsonValue) => {
+    if (
+      candidate &&
+      typeof candidate === "object" &&
+      !Array.isArray(candidate)
+    ) {
+      const obj = candidate as JsonObject;
+      // MCP incidentSchema: id is z.string()
+      const maybeId = obj.id;
+      if (typeof maybeId === "string" && maybeId.trim())
+        ids.add(maybeId.trim());
+    }
+  };
+
+  // Handle array of incidents directly (from MCP normalized results)
+  if (Array.isArray(payload)) {
+    payload.forEach((item: JsonValue) => grabId(item));
+  }
+  // Handle object with incidents property
+  else if (payload && typeof payload === "object") {
+    const obj = payload as JsonObject;
+    if (Array.isArray(obj.incidents)) {
+      obj.incidents.forEach((item: JsonValue) => grabId(item));
+    }
+  }
+
+  return Array.from(ids);
+}
+
+/**
+ * Determine capability type from tool name
+ */
+function getCapabilityType(toolName: string): string | null {
+  if (toolName.includes("incident")) return "incident";
+  if (toolName.includes("service")) return "service";
+  if (toolName.includes("ticket")) return "ticket";
+  if (toolName.includes("alert")) return "alert";
+  if (toolName.includes("metric")) return "metric";
+  if (toolName.includes("log")) return "log";
+  return null;
+}
+
+/**
+ * Build CopilotReferences from tool results using MCP schema field names.
+ *
+ * MCP schema fields used:
+ * - incidentSchema: id (z.string())
+ * - alertSchema: id (z.string())
+ * - ticketSchema: id (z.string())
+ * - serviceSchema: name (z.string())
+ * - logQuerySchema: expression.search (z.string())
+ * - metricQuerySchema: expression.metricName (z.string())
  */
 export function buildReferences(
-    results: ToolResult[],
-    registry: DomainRegistry
+  results: ToolResult[],
 ): CopilotReferences | undefined {
-    if (!results.length) return undefined;
+  if (!results.length) return undefined;
 
-    // Storage for entity references (simple ID arrays)
-    const entityRefs = new Map<string, Set<string>>();
+  const incidents = new Set<string>();
+  const services = new Set<string>();
+  const tickets = new Set<string>();
+  const alerts = new Set<string>();
+  const metrics: MetricReference[] = [];
+  const logs: LogReference[] = [];
 
-    // Storage for structured references (objects with multiple fields)
-    const structuredBuckets = new Map<string, any[]>();
+  for (const r of results) {
+    const args = (r.arguments ?? {}) as JsonObject;
 
-    for (const result of results) {
-        // Get domain configuration for this tool
-        const domain = registry.getDomainForTool(result.name);
-        if (!domain || !domain.referenceExtraction) {
-            // Skip tools without domain configuration or reference extraction
-            continue;
-        }
+    // Extract incident IDs from results
+    collectIncidentIds(r.result).forEach((id) => incidents.add(id));
 
-        const { referenceExtraction } = domain;
+    // Get capability type for this tool
+    const capabilityType = getCapabilityType(r.name);
+    if (!capabilityType) continue;
 
-
-        // Preprocess result to extract data from MCP content blocks
-        let processedResult: any = result.result;
-
-        // Handle arrays that were already normalized from MCP content structures
-        // The toolResultNormalizer converts {content: [...]} to just [...] when no other keys exist
-        if (Array.isArray(processedResult)) {
-            // Wrap the array in a data field so JSONPath extraction works
-            processedResult = { data: processedResult };
-        } else if (processedResult && typeof processedResult === 'object') {
-            processedResult = { ...processedResult };
-            if (processedResult.content && Array.isArray(processedResult.content)) {
-                // Process MCP content blocks that haven't been normalized yet
-                for (const item of processedResult.content) {
-                    if (item.type === 'text' && item.text) {
-                        try {
-                            const parsed = JSON.parse(item.text);
-                            // If parsed is an array, put it in 'data' if not exists
-                            if (Array.isArray(parsed)) {
-                                if (!processedResult.data) {
-                                    processedResult.data = parsed;
-                                } else if (Array.isArray(processedResult.data)) {
-                                    processedResult.data.push(...parsed);
-                                }
-                            }
-                            // If parsed is an object, merge it
-                            else if (typeof parsed === 'object' && parsed !== null) {
-                                Object.assign(processedResult, parsed);
-                            }
-                        } catch (e) {
-                            // Ignore parsing errors
-                        }
-                    }
-                }
-            }
-        }
-
-        const toolResult = { result: processedResult, arguments: result.arguments || {} };
-
-        // GLOBAL: Extract service from scope if present (works for any tool)
-        // Many tools (query-incidents, query-metrics, query-logs) use a 'scope' argument
-        const scope = toolResult.arguments.scope as any;
-        if (scope && typeof scope === 'object' && scope.service) {
-            const collectionKey = 'services';
-            if (!entityRefs.has(collectionKey)) {
-                entityRefs.set(collectionKey, new Set<string>());
-            }
-            if (typeof scope.service === 'string' && scope.service.trim()) {
-                entityRefs.get(collectionKey)!.add(scope.service.trim());
-            }
-        }
-
-        // Extract simple entity references from arguments
-        if (referenceExtraction.argumentPaths) {
-            for (const [entityType, paths] of Object.entries(referenceExtraction.argumentPaths)) {
-                const ids = extractByPaths(toolResult, paths);
-                const collectionKey = registry.getCollectionKey(entityType);
-
-                if (!entityRefs.has(collectionKey)) {
-                    entityRefs.set(collectionKey, new Set<string>());
-                }
-
-                for (const id of ids) {
-                    if (typeof id === 'string' && id.trim()) {
-                        entityRefs.get(collectionKey)!.add(id.trim());
-                    }
-                }
-            }
-        }
-
-        // Extract simple entity references from results
-        if (referenceExtraction.resultPaths) {
-            for (const [entityType, config] of Object.entries(referenceExtraction.resultPaths)) {
-                const collectionKey = registry.getCollectionKey(entityType);
-
-                if (!entityRefs.has(collectionKey)) {
-                    entityRefs.set(collectionKey, new Set<string>());
-                }
-
-                // Extract from idPaths
-                if (config.idPaths) {
-                    const ids = extractByPaths(toolResult, config.idPaths);
-                    for (const id of ids) {
-                        if (typeof id === 'string' && id.trim()) {
-                            entityRefs.get(collectionKey)!.add(id.trim());
-                        }
-                    }
-                }
-
-                // Extract from arrayPaths (arrays of objects)
-                if (config.arrayPaths) {
-                    for (const arrayPath of config.arrayPaths) {
-                        const items = extractByPath(toolResult, arrayPath);
-                        for (const item of items) {
-                            if (item && typeof item === 'object' && config.idPaths) {
-                                // Extract ID from each item
-                                // idPaths might be like ['$.result.id'] but we need to extract from the item directly
-                                // So convert '$.result.id' to '$.id' or  just try both the full path and a simple '$.id'
-                                const itemIds = extractByPaths({ item }, config.idPaths.map(p => p.replace(/^\$\.result\./, '$.item.')));
-                                for (const id of itemIds) {
-                                    if (typeof id === 'string' && id.trim()) {
-                                        entityRefs.get(collectionKey)!.add(id.trim());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Extract structured references
-        if (referenceExtraction.structuredReferences) {
-            for (const structuredRef of referenceExtraction.structuredReferences) {
-                const { bucket, requiredFields, optionalFields } = structuredRef;
-
-                // Extract required fields
-                const refObj: any = {};
-                let hasAllRequired = true;
-
-                for (const field of requiredFields) {
-                    const values = extractByPath(toolResult, field.path);
-                    if (values.length > 0) {
-                        refObj[field.name] = values[0];
-                    } else {
-                        hasAllRequired = false;
-                        break;
-                    }
-                }
-
-                // Skip if missing required fields
-                if (!hasAllRequired) {
-                    continue;
-                }
-
-                // Extract optional fields
-                if (optionalFields) {
-                    for (const field of optionalFields) {
-                        const values = extractByPath(toolResult, field.path);
-                        if (values.length > 0) {
-                            refObj[field.name] = values[0];
-                        }
-                    }
-                }
-
-                // Normalize step for metrics
-                if (bucket === 'metrics' && 'step' in refObj) {
-                    const normalizedStep = normalizeMetricStep(refObj.step);
-                    if (normalizedStep !== undefined) {
-                        refObj.step = normalizedStep;
-                    } else {
-                        delete refObj.step;
-                    }
-                }
-
-                // Add to bucket
-                if (!structuredBuckets.has(bucket)) {
-                    structuredBuckets.set(bucket, []);
-                }
-                structuredBuckets.get(bucket)!.push(refObj);
-            }
-        }
+    // Extract from arguments based on capability type
+    if (capabilityType === "incident") {
+      // MCP incidentQuerySchema: id is z.string().optional()
+      if (args.id) incidents.add(String(args.id).trim());
     }
 
-    // Build final references object
-    const refs: CopilotReferences = {};
-
-    // Add simple entity references
-    for (const [bucket, ids] of entityRefs.entries()) {
-        if (ids.size > 0) {
-            (refs as any)[bucket] = Array.from(ids);
-        }
+    if (capabilityType === "service") {
+      // MCP serviceQuerySchema: service scope field
+      if (args.service) services.add(String(args.service).trim());
+      // MCP serviceQuerySchema: ids is z.array(z.string()).optional()
+      if (Array.isArray(args.ids)) {
+        args.ids.forEach((s: JsonValue) => {
+          if (typeof s === "string" && s.trim()) services.add(s.trim());
+        });
+      }
+      // Extract service names from results (MCP serviceSchema: name)
+      if (Array.isArray(r.result)) {
+        r.result.forEach((svc: JsonValue) => {
+          if (svc && typeof svc === "object" && !Array.isArray(svc)) {
+            const svcObj = svc as JsonObject;
+            if (typeof svcObj.name === "string" && svcObj.name.trim()) {
+              services.add(svcObj.name.trim());
+            }
+          }
+        });
+      }
     }
 
-    // Add structured references
-    for (const [bucket, items] of structuredBuckets.entries()) {
-        if (items.length > 0) {
-            (refs as any)[bucket] = items;
-        }
+    if (capabilityType === "ticket") {
+      // MCP ticketQuerySchema: id is z.string().optional()
+      if (args.id) tickets.add(String(args.id).trim());
+
+      // Extract ticket IDs from results (MCP ticketSchema: id)
+      if (Array.isArray(r.result)) {
+        r.result.forEach((ticket: JsonValue) => {
+          if (ticket && typeof ticket === "object" && !Array.isArray(ticket)) {
+            const ticketObj = ticket as JsonObject;
+            if (typeof ticketObj.id === "string" && ticketObj.id.trim()) {
+              tickets.add(ticketObj.id.trim());
+            }
+          }
+        });
+      }
     }
 
-    return Object.keys(refs).length > 0 ? refs : undefined;
+    if (capabilityType === "alert") {
+      // MCP alertQuerySchema: id is z.string().optional()
+      if (args.id) alerts.add(String(args.id).trim());
+
+      // For query-alerts, extract alert IDs from the result
+      // Handle array result (query-alerts returns array directly)
+      // MCP alertSchema: id is z.string()
+      if (Array.isArray(r.result)) {
+        r.result.forEach((alert: JsonValue) => {
+          if (alert && typeof alert === "object" && !Array.isArray(alert)) {
+            const alertObj = alert as JsonObject;
+            if (typeof alertObj.id === "string" && alertObj.id.trim()) {
+              alerts.add(alertObj.id.trim());
+            }
+          }
+        });
+      }
+      // Handle object result with alerts property
+      else if (r.result && typeof r.result === "object") {
+        const resultObj = r.result as JsonObject;
+        if (Array.isArray(resultObj.alerts)) {
+          resultObj.alerts.forEach((alert: JsonValue) => {
+            if (alert && typeof alert === "object" && !Array.isArray(alert)) {
+              const alertObj = alert as JsonObject;
+              if (typeof alertObj.id === "string" && alertObj.id.trim()) {
+                alerts.add(alertObj.id.trim());
+              }
+            }
+          });
+        }
+      }
+    }
+
+    if (capabilityType === "metric") {
+      let expression: string | undefined;
+
+      // MCP metricQuerySchema: expression can be string or object with metricName
+      if (typeof args.expression === "string" && args.expression.trim()) {
+        expression = args.expression.trim();
+      } else if (
+        args.expression &&
+        typeof args.expression === "object" &&
+        !Array.isArray(args.expression)
+      ) {
+        const metricName = (args.expression as JsonObject).metricName;
+        if (typeof metricName === "string" && metricName.trim()) {
+          expression = metricName.trim();
+        }
+      }
+
+      if (expression) {
+        // Construct a simple MetricExpression from the string
+        const metric: MetricReference = {
+          expression: { metricName: expression },
+        };
+        if (typeof args.start === "string" && args.start.trim())
+          metric.start = args.start.trim();
+        if (typeof args.end === "string" && args.end.trim())
+          metric.end = args.end.trim();
+        const step = normalizeMetricStep(args.step);
+        if (step !== undefined) metric.step = step;
+        if (typeof args.service === "string" && args.service.trim())
+          metric.scope = { service: args.service.trim() };
+
+        // Handle object scope (MCP uses scope object)
+        if (
+          args.scope &&
+          typeof args.scope === "object" &&
+          !Array.isArray(args.scope) &&
+          (args.scope as JsonObject).service
+        ) {
+          metric.scope = metric.scope ?? {
+            service: (args.scope as JsonObject).service as string,
+          };
+        }
+
+        metrics.push(metric);
+      }
+    }
+
+    if (capabilityType === "log") {
+      let query: string | undefined;
+
+      // MCP logQuerySchema: expression is object with search field
+      if (args.expression && typeof args.expression === "object" && !Array.isArray(args.expression)) {
+        const expr = args.expression as JsonObject;
+        // MCP logExpressionSchema: search is z.string().optional()
+        if (typeof expr.search === "string") query = expr.search;
+      }
+
+      if (query) {
+        // Construct a simple LogExpression from the string
+        const log: LogReference = {
+          expression: { search: query },
+        };
+        if (typeof args.start === "string" && args.start.trim())
+          log.start = args.start.trim();
+        if (typeof args.end === "string" && args.end.trim())
+          log.end = args.end.trim();
+        if (typeof args.service === "string" && args.service.trim())
+          log.scope = { service: args.service.trim() };
+
+        // Handle object scope (MCP uses scope object)
+        if (
+          args.scope &&
+          typeof args.scope === "object" &&
+          !Array.isArray(args.scope) &&
+          (args.scope as JsonObject).service
+        ) {
+          log.scope = log.scope ?? { service: (args.scope as JsonObject).service as string };
+        }
+
+        logs.push(log);
+      }
+    }
+  }
+
+  const refs: CopilotReferences = {};
+  if (incidents.size) refs.incidents = Array.from(incidents);
+  if (services.size) refs.services = Array.from(services);
+  if (tickets.size) refs.tickets = Array.from(tickets);
+  if (alerts.size) refs.alerts = Array.from(alerts);
+  if (metrics.length) refs.metrics = metrics;
+  if (logs.length) refs.logs = logs;
+
+  return Object.keys(refs).length ? refs : undefined;
 }
+

@@ -281,7 +281,8 @@ describe('ChatNamer', () => {
       const name = namer.generateName(
         'Tell me about INC-999',
         'INC-999 caused high CPU',
-        Date.now()
+        Date.now(),
+        [{ type: 'incident', value: 'INC-999', extractedAt: Date.now(), source: 'test' }]
       );
 
       assert.ok(name.includes('CPU'));
@@ -293,7 +294,8 @@ describe('ChatNamer', () => {
       const name = namer.generateName(
         'Tell me about INC-999',
         'Here is the incident information for INC-999',
-        Date.now()
+        Date.now(),
+        [{ type: 'incident', value: 'INC-999', extractedAt: Date.now(), source: 'test' }]
       );
 
       // Should just be the incident ID since no other context

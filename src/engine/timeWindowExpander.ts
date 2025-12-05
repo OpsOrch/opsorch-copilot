@@ -1,25 +1,10 @@
-import { ToolCall, ToolResult } from '../types.js';
-import { McpClient } from '../mcpClient.js';
-import { DomainRegistry } from './domainRegistry.js';
-import { isValidISODate, getTimestampMs, calculateDurationMs } from './timestampUtils.js';
-
-/**
- * Represents a time window for queries
- */
-export interface TimeWindow {
-  start: string; // ISO 8601
-  end: string; // ISO 8601
-}
-
-/**
- * Result of time window expansion
- */
-export interface ExpansionResult {
-  expanded: boolean;
-  originalWindow: TimeWindow;
-  expandedWindow?: TimeWindow;
-  expansionFactor?: number;
-}
+import { ToolCall, ToolResult, TimeWindow, ExpansionResult } from "../types.js";
+import { McpClient } from "../mcpClient.js";
+import {
+  isValidISODate,
+  getTimestampMs,
+  calculateDurationMs,
+} from "./timestampUtils.js";
 
 const MAX_WINDOW_HOURS = 24;
 const DEFAULT_EXPANSION_FACTOR = 2;
@@ -29,8 +14,6 @@ const DEFAULT_EXPANSION_FACTOR = 2;
  * This helps avoid missing relevant data due to overly narrow time ranges.
  */
 export class TimeWindowExpander {
-  constructor(private registry: DomainRegistry) { }
-
   /**
    * Check if a tool result is empty
    */
@@ -42,39 +25,39 @@ export class TimeWindowExpander {
     const payload = result.result;
 
     // Check for explicit empty indicators
-    if (typeof payload === 'object' && payload !== null) {
+    if (typeof payload === "object" && payload !== null) {
       // Check for empty arrays
       if (Array.isArray(payload)) {
         return payload.length === 0;
       }
 
       // Check for common empty result patterns
-      if ('entries' in payload && Array.isArray(payload.entries)) {
+      if ("entries" in payload && Array.isArray(payload.entries)) {
         return payload.entries.length === 0;
       }
 
-      if ('events' in payload && Array.isArray(payload.events)) {
+      if ("events" in payload && Array.isArray(payload.events)) {
         return payload.events.length === 0;
       }
 
-      if ('data' in payload && Array.isArray(payload.data)) {
+      if ("data" in payload && Array.isArray(payload.data)) {
         return payload.data.length === 0;
       }
 
-      if ('series' in payload && Array.isArray(payload.series)) {
+      if ("series" in payload && Array.isArray(payload.series)) {
         return payload.series.length === 0;
       }
 
-      if ('results' in payload && Array.isArray(payload.results)) {
+      if ("results" in payload && Array.isArray(payload.results)) {
         return payload.results.length === 0;
       }
 
       // Check for count = 0
-      if ('count' in payload && payload.count === 0) {
+      if ("count" in payload && payload.count === 0) {
         return true;
       }
 
-      if ('total' in payload && payload.total === 0) {
+      if ("total" in payload && payload.total === 0) {
         return true;
       }
     }
@@ -87,18 +70,18 @@ export class TimeWindowExpander {
    */
   expandWindow(
     window: TimeWindow,
-    factor: number = DEFAULT_EXPANSION_FACTOR
+    factor: number = DEFAULT_EXPANSION_FACTOR,
   ): TimeWindow {
     try {
       const startMs = getTimestampMs(window.start);
       const endMs = getTimestampMs(window.end);
 
       if (isNaN(startMs) || isNaN(endMs)) {
-        throw new Error('Invalid time window');
+        throw new Error("Invalid time window");
       }
 
       const durationMs = calculateDurationMs(window.start, window.end);
-      const expansionMs = durationMs * (factor - 1) / 2; // Expand equally on both sides
+      const expansionMs = (durationMs * (factor - 1)) / 2; // Expand equally on both sides
 
       let newStartMs = startMs - expansionMs;
       let newEndMs = endMs + expansionMs;
@@ -118,7 +101,7 @@ export class TimeWindowExpander {
         start: new Date(newStartMs).toISOString(),
         end: new Date(newEndMs).toISOString(),
       };
-    } catch (error) {
+    } catch {
       // If expansion fails, return original window
       return window;
     }
@@ -132,7 +115,7 @@ export class TimeWindowExpander {
     start: string | undefined,
     end: string | undefined,
     paddingMinutes: number = 15,
-    defaultDurationMinutes: number = 60
+    defaultDurationMinutes: number = 60,
   ): { start: string; end: string } | undefined {
     const paddingMs = paddingMinutes * 60 * 1000;
     const defaultDurationMs = defaultDurationMinutes * 60 * 1000;
@@ -148,7 +131,11 @@ export class TimeWindowExpander {
     }
 
     const fallbackNow = Date.now();
-    let expandedStart = startValid ? startMs! : endValid ? endMs! - defaultDurationMs : fallbackNow - defaultDurationMs;
+    let expandedStart = startValid
+      ? startMs!
+      : endValid
+        ? endMs! - defaultDurationMs
+        : fallbackNow - defaultDurationMs;
     let expandedEnd = endValid ? endMs! : expandedStart + defaultDurationMs;
 
     // Apply padding
@@ -162,7 +149,7 @@ export class TimeWindowExpander {
 
     return {
       start: new Date(expandedStart).toISOString(),
-      end: new Date(expandedEnd).toISOString()
+      end: new Date(expandedEnd).toISOString(),
     };
   }
 
@@ -173,7 +160,7 @@ export class TimeWindowExpander {
     call: ToolCall,
     result: ToolResult,
     mcp: McpClient,
-    maxWindowHours: number = MAX_WINDOW_HOURS
+    maxWindowHours: number = MAX_WINDOW_HOURS,
   ): Promise<{ result: ToolResult; expansion: ExpansionResult }> {
     // Check if this is a time-based query
     if (!this.isTimeBasedQuery(call)) {
@@ -181,7 +168,7 @@ export class TimeWindowExpander {
         result,
         expansion: {
           expanded: false,
-          originalWindow: { start: '', end: '' },
+          originalWindow: { start: "", end: "" },
         },
       };
     }
@@ -193,7 +180,7 @@ export class TimeWindowExpander {
         result,
         expansion: {
           expanded: false,
-          originalWindow: { start: '', end: '' },
+          originalWindow: { start: "", end: "" },
         },
       };
     }
@@ -206,7 +193,7 @@ export class TimeWindowExpander {
 
     if (windowDurationMs >= maxWindowMs) {
       console.log(
-        `[TimeWindowExpander] Window already at maximum (${maxWindowHours}h), not expanding`
+        `[TimeWindowExpander] Window already at maximum (${maxWindowHours}h), not expanding`,
       );
       return {
         result,
@@ -221,7 +208,7 @@ export class TimeWindowExpander {
     const expandedWindow = this.expandWindow(originalWindow);
 
     console.log(
-      `[TimeWindowExpander] Expanding window from ${originalWindow.start} - ${originalWindow.end} to ${expandedWindow.start} - ${expandedWindow.end}`
+      `[TimeWindowExpander] Expanding window from ${originalWindow.start} - ${originalWindow.end} to ${expandedWindow.start} - ${expandedWindow.end}`,
     );
 
     // Create new call with expanded window
@@ -250,7 +237,7 @@ export class TimeWindowExpander {
     } catch (error) {
       console.error(
         `[TimeWindowExpander] Failed to retry with expanded window:`,
-        error
+        error,
       );
       return {
         result,
@@ -263,11 +250,21 @@ export class TimeWindowExpander {
   }
 
   /**
-   * Check if a tool call supports time windows using domain configuration
+   * Check if a tool call supports time windows based on tool name
    */
   private isTimeBasedQuery(call: ToolCall): boolean {
-    const domain = this.registry.getDomainForTool(call.name);
-    return !!domain?.followUp?.timeWindow;
+    // Known time-based tools
+    const timeBasedTools = [
+      "query-logs",
+      "query-metrics",
+      "query-incidents",
+      "query-alerts",
+    ];
+    return (
+      timeBasedTools.includes(call.name) ||
+      call.name.includes("query") ||
+      call.name.includes("search")
+    );
   }
 
   /**
@@ -276,7 +273,7 @@ export class TimeWindowExpander {
   private extractTimeWindow(call: ToolCall): TimeWindow | null {
     const args = call.arguments;
 
-    if (!args || typeof args !== 'object') {
+    if (!args || typeof args !== "object") {
       return null;
     }
 
@@ -284,8 +281,8 @@ export class TimeWindowExpander {
     const end = args.end;
 
     if (
-      typeof start === 'string' &&
-      typeof end === 'string' &&
+      typeof start === "string" &&
+      typeof end === "string" &&
       isValidISODate(start) &&
       isValidISODate(end)
     ) {

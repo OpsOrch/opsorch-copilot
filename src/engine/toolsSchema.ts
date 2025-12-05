@@ -1,7 +1,7 @@
-import { Tool, ToolCall, JsonObject } from '../types.js';
-import { isValidISO8601 } from './timestampUtils.js';
+import { Tool, ToolCall, JsonObject, JsonValue } from "../types.js";
+import { isValidISO8601 } from "./timestampUtils.js";
 
-export type ValidationResult = {
+export type ToolValidationResult = {
   valid: boolean;
   errors: string[];
   warnings: string[]; // Non-blocking suggestions
@@ -12,17 +12,17 @@ export type ValidationResult = {
  * Recursively strip null and undefined values from an object.
  * This allows the LLM to pass null for optional parameters without validation errors.
  */
-function stripNullFields(obj: any): any {
+function stripNullFields(obj: JsonValue): JsonValue | undefined {
   if (obj === null || obj === undefined) {
     return undefined;
   }
 
   if (Array.isArray(obj)) {
-    return obj.map(stripNullFields).filter(item => item !== undefined);
+    return obj.map(stripNullFields).filter((item) => item !== undefined);
   }
 
-  if (typeof obj === 'object') {
-    const cleaned: any = {};
+  if (typeof obj === "object") {
+    const cleaned: JsonObject = {};
     for (const [key, value] of Object.entries(obj)) {
       const cleanedValue = stripNullFields(value);
       if (cleanedValue !== undefined) {
@@ -39,100 +39,152 @@ function stripNullFields(obj: any): any {
  * Validate a tool call against its schema.
  * Note: This function will strip null/undefined fields from arguments before validation.
  */
-export function validateToolCall(call: ToolCall, tool: Tool): ValidationResult {
+export function validateToolCall(
+  call: ToolCall,
+  tool: Tool,
+): ToolValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
   const schema = tool.inputSchema;
 
-  if (!schema || typeof schema !== 'object') {
+  if (!schema || typeof schema !== "object") {
     return { valid: true, errors: [], warnings: [] }; // No schema = no validation
   }
 
   // Strip null/undefined fields from arguments
-  const rawArgs = (call.arguments || {}) as Record<string, any>;
-  const cleanedArgs = stripNullFields(rawArgs) as Record<string, any>;
-  const schemaObj = schema as any;
+  const rawArgs = (call.arguments || {}) as JsonObject;
+  const cleanedArgs = stripNullFields(rawArgs) as JsonObject;
+  const schemaObj = schema as JsonObject;
 
   // Check required fields
-  const required = Array.isArray(schemaObj.required) ? schemaObj.required as string[] : [];
+  const required = Array.isArray(schemaObj.required)
+    ? (schemaObj.required as string[])
+    : [];
   for (const field of required) {
     const value = cleanedArgs[field];
     if (value === undefined || value === null) {
       errors.push(getRequiredFieldError(call.name, field));
-    } else if (typeof value === 'string' && !value.trim()) {
+    } else if (typeof value === "string" && !value.trim()) {
       errors.push(`Required field '${field}' is empty`);
     }
   }
 
   // Validate types if properties defined
-  const properties = schemaObj.properties as Record<string, any> | undefined;
+  const properties = schemaObj.properties as JsonObject | undefined;
   if (properties) {
     for (const [key, value] of Object.entries(cleanedArgs)) {
-      const propSchema = properties[key];
+      const propSchema = properties[key] as JsonObject | undefined;
       if (!propSchema) continue; // Unknown property, skip
 
-      const expectedType = propSchema.type;
-      const actualType = Array.isArray(value) ? 'array' : typeof value;
+      const expectedType = propSchema.type as string | undefined;
+      const actualType = Array.isArray(value) ? "array" : typeof value;
 
       // Special handling for integer: JavaScript typeof returns 'number' for all numbers
-      const typesMatch = expectedType === actualType ||
-        (expectedType === 'integer' && actualType === 'number');
+      const typesMatch =
+        expectedType === actualType ||
+        (expectedType === "integer" && actualType === "number");
 
       if (expectedType && !typesMatch) {
-        errors.push(`Field '${key}' has type ${actualType}, expected ${expectedType}`);
+        errors.push(
+          `Field '${key}' has type ${actualType}, expected ${expectedType}`,
+        );
         continue; // Skip further validation if type is wrong
       }
 
       // Timestamp validation for common time fields
-      if (typeof value === 'string' && ['start', 'end', 'timestamp', 'at', 'createdAt', 'updatedAt'].includes(key)) {
+      if (
+        typeof value === "string" &&
+        ["start", "end", "timestamp", "at", "createdAt", "updatedAt"].includes(
+          key,
+        )
+      ) {
         if (!isValidISO8601(value)) {
-          errors.push(`Field '${key}' must be a valid ISO 8601 timestamp (e.g., '2024-01-01T10:00:00Z')`);
+          errors.push(
+            `Field '${key}' must be a valid ISO 8601 timestamp (e.g., '2024-01-01T10:00:00Z')`,
+          );
         }
       }
 
       // Numeric constraints
-      if ((expectedType === 'number' || expectedType === 'integer') && typeof value === 'number') {
-        if (propSchema.minimum !== undefined && value < propSchema.minimum) {
-          errors.push(`Field '${key}' value ${value} is below minimum ${propSchema.minimum}`);
+      if (
+        (expectedType === "number" || expectedType === "integer") &&
+        typeof value === "number"
+      ) {
+        if (
+          typeof propSchema.minimum === "number" &&
+          value < propSchema.minimum
+        ) {
+          errors.push(
+            `Field '${key}' value ${value} is below minimum ${propSchema.minimum}`,
+          );
         }
-        if (propSchema.maximum !== undefined && value > propSchema.maximum) {
-          errors.push(`Field '${key}' value ${value} exceeds maximum ${propSchema.maximum}`);
+        if (
+          typeof propSchema.maximum === "number" &&
+          value > propSchema.maximum
+        ) {
+          errors.push(
+            `Field '${key}' value ${value} exceeds maximum ${propSchema.maximum}`,
+          );
         }
-        if (expectedType === 'integer' && !Number.isInteger(value)) {
+        if (expectedType === "integer" && !Number.isInteger(value)) {
           errors.push(`Field '${key}' must be an integer, got ${value}`);
         }
       }
 
       // String pattern validation
-      if (expectedType === 'string' && typeof value === 'string' && propSchema.pattern) {
+      if (
+        expectedType === "string" &&
+        typeof value === "string" &&
+        typeof propSchema.pattern === "string"
+      ) {
         const regex = new RegExp(propSchema.pattern);
         if (!regex.test(value)) {
-          errors.push(`Field '${key}' does not match required pattern: ${propSchema.pattern}`);
+          errors.push(
+            `Field '${key}' does not match required pattern: ${propSchema.pattern}`,
+          );
         }
       }
 
       // Enum constraints
       if (propSchema.enum && Array.isArray(propSchema.enum)) {
         if (!propSchema.enum.includes(value)) {
-          errors.push(`Field '${key}' value '${value}' not in allowed values: ${propSchema.enum.join(', ')}`);
+          errors.push(
+            `Field '${key}' value '${value}' not in allowed values: ${propSchema.enum.join(", ")}`,
+          );
         }
       }
 
       // Array constraints
-      if (expectedType === 'array' && Array.isArray(value)) {
-        if (propSchema.minItems !== undefined && value.length < propSchema.minItems) {
-          errors.push(`Field '${key}' has ${value.length} items, minimum is ${propSchema.minItems}`);
+      if (expectedType === "array" && Array.isArray(value)) {
+        if (
+          typeof propSchema.minItems === "number" &&
+          value.length < propSchema.minItems
+        ) {
+          errors.push(
+            `Field '${key}' has ${value.length} items, minimum is ${propSchema.minItems}`,
+          );
         }
-        if (propSchema.maxItems !== undefined && value.length > propSchema.maxItems) {
-          errors.push(`Field '${key}' has ${value.length} items, maximum is ${propSchema.maxItems}`);
+        if (
+          typeof propSchema.maxItems === "number" &&
+          value.length > propSchema.maxItems
+        ) {
+          errors.push(
+            `Field '${key}' has ${value.length} items, maximum is ${propSchema.maxItems}`,
+          );
         }
       }
 
       // Nested object validation
-      if (expectedType === 'object' && typeof value === 'object' && value !== null && propSchema.properties) {
-        const nestedResult = validateObject(value, propSchema);
-        errors.push(...nestedResult.errors.map(e => `${key}.${e}`));
-        warnings.push(...nestedResult.warnings.map(w => `${key}.${w}`));
+      if (
+        expectedType === "object" &&
+        typeof value === "object" &&
+        value !== null &&
+        !Array.isArray(value) &&
+        propSchema.properties
+      ) {
+        const nestedResult = validateObject(value as JsonObject, propSchema);
+        errors.push(...nestedResult.errors.map((e) => `${key}.${e}`));
+        warnings.push(...nestedResult.warnings.map((w) => `${key}.${w}`));
       }
     }
   }
@@ -153,16 +205,18 @@ export function validateToolCall(call: ToolCall, tool: Tool): ValidationResult {
 /**
  * Validate nested object
  */
-function validateObject(obj: any, schema: any): ValidationResult {
+function validateObject(obj: JsonObject, schema: JsonObject): ToolValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
 
-  const properties = schema.properties as Record<string, any> | undefined;
+  const properties = schema.properties as JsonObject | undefined;
   if (!properties) {
     return { valid: true, errors: [], warnings: [] };
   }
 
-  const required = Array.isArray(schema.required) ? schema.required as string[] : [];
+  const required = Array.isArray(schema.required)
+    ? (schema.required as string[])
+    : [];
   for (const field of required) {
     if (!(field in obj) || obj[field] === undefined || obj[field] === null) {
       errors.push(`Missing required field: ${field}`);
@@ -170,14 +224,16 @@ function validateObject(obj: any, schema: any): ValidationResult {
   }
 
   for (const [key, value] of Object.entries(obj)) {
-    const propSchema = properties[key];
+    const propSchema = properties[key] as JsonObject | undefined;
     if (!propSchema) continue;
 
-    const expectedType = propSchema.type;
-    const actualType = Array.isArray(value) ? 'array' : typeof value;
+    const expectedType = propSchema.type as string | undefined;
+    const actualType = Array.isArray(value) ? "array" : typeof value;
 
     if (expectedType && expectedType !== actualType) {
-      errors.push(`Field '${key}' has type ${actualType}, expected ${expectedType}`);
+      errors.push(
+        `Field '${key}' has type ${actualType}, expected ${expectedType}`,
+      );
     }
   }
 
@@ -187,12 +243,18 @@ function validateObject(obj: any, schema: any): ValidationResult {
 /**
  * Validate common patterns across tools
  */
-function validateCommonPatterns(toolName: string, args: Record<string, any>): ValidationResult {
+function validateCommonPatterns(
+  toolName: string,
+  args: JsonObject,
+): ToolValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
 
   // Time window validation (start < end)
-  if (args.start && args.end) {
+  if (
+    typeof args.start === "string" &&
+    typeof args.end === "string"
+  ) {
     if (!isValidISO8601(args.start)) {
       errors.push(`'start' must be a valid ISO 8601 timestamp`);
     }
@@ -210,40 +272,55 @@ function validateCommonPatterns(toolName: string, args: Record<string, any>): Va
 
       const durationHours = (end - start) / (1000 * 60 * 60);
       if (durationHours > 24) {
-        warnings.push(`Time window is ${durationHours.toFixed(1)} hours. Consider narrowing for better performance.`);
+        warnings.push(
+          `Time window is ${durationHours.toFixed(1)} hours. Consider narrowing for better performance.`,
+        );
       }
     }
   }
 
   // Metric expression validation
-  if (toolName === 'query-metrics' && args.expression) {
+  if (toolName === "query-metrics" && args.expression) {
     const expr = args.expression;
-    if (typeof expr === 'string') {
+    if (typeof expr === "string") {
       if (expr.trim().length === 0) {
         errors.push(`'expression' cannot be empty`);
       }
       if (expr.length > 500) {
-        warnings.push(`'expression' is very long (${expr.length} chars). Consider simplifying.`);
+        warnings.push(
+          `'expression' is very long (${expr.length} chars). Consider simplifying.`,
+        );
       }
     }
   }
 
   // Scope validation (at least one field)
-  if (args.scope && typeof args.scope === 'object') {
-    const scopeFields = Object.keys(args.scope).filter(k => args.scope[k] !== undefined);
+  if (
+    args.scope &&
+    typeof args.scope === "object" &&
+    !Array.isArray(args.scope)
+  ) {
+    const scopeObj = args.scope as JsonObject;
+    const scopeFields = Object.keys(scopeObj).filter(
+      (k) => scopeObj[k] !== undefined,
+    );
     if (scopeFields.length === 0) {
-      warnings.push(`'scope' is empty. Specify at least one field (service, environment, team) for better filtering.`);
+      warnings.push(
+        `'scope' is empty. Specify at least one field (service, environment, team) for better filtering.`,
+      );
     }
   }
 
   // Limit/pagination validation
   if (args.limit !== undefined) {
-    if (typeof args.limit === 'number') {
+    if (typeof args.limit === "number") {
       if (args.limit <= 0) {
         errors.push(`'limit' must be positive, got ${args.limit}`);
       }
       if (args.limit > 1000) {
-        warnings.push(`'limit' is very high (${args.limit}). This may cause slow responses or timeouts.`);
+        warnings.push(
+          `'limit' is very high (${args.limit}). This may cause slow responses or timeouts.`,
+        );
       }
     }
   }
@@ -256,19 +333,23 @@ function validateCommonPatterns(toolName: string, args: Record<string, any>): Va
  */
 function getRequiredFieldError(toolName: string, field: string): string {
   const hints: Record<string, Record<string, string>> = {
-    'query-metrics': {
-      'expression': "Missing required field: 'expression'. Provide a metric expression like 'latency_p95', 'cpu_usage', or 'error_rate'.",
-      'step': "Missing required field: 'step'. Provide step interval in seconds (e.g., 60 for 1-minute intervals).",
-      'start': "Missing required field: 'start'. Provide start time as ISO 8601 timestamp (e.g., '2024-01-01T10:00:00Z').",
-      'end': "Missing required field: 'end'. Provide end time as ISO 8601 timestamp (e.g., '2024-01-01T11:00:00Z').",
+    "query-metrics": {
+      expression:
+        "Missing required field: 'expression'. Provide a metric expression like 'latency_p95', 'cpu_usage', or 'error_rate'.",
+      step: "Missing required field: 'step'. Provide step interval in seconds (e.g., 60 for 1-minute intervals).",
+      start:
+        "Missing required field: 'start'. Provide start time as ISO 8601 timestamp (e.g., '2024-01-01T10:00:00Z').",
+      end: "Missing required field: 'end'. Provide end time as ISO 8601 timestamp (e.g., '2024-01-01T11:00:00Z').",
     },
-    'query-logs': {
-      'query': "Missing required field: 'query'. Provide a log query string (e.g., 'error', 'status:500').",
-      'start': "Missing required field: 'start'. Provide start time as ISO 8601 timestamp.",
-      'end': "Missing required field: 'end'. Provide end time as ISO 8601 timestamp.",
+    "query-logs": {
+      expression:
+        "Missing required field: 'expression'. Provide a log expression object with 'search' field (e.g., { search: 'error' }).",
+      start:
+        "Missing required field: 'start'. Provide start time as ISO 8601 timestamp.",
+      end: "Missing required field: 'end'. Provide end time as ISO 8601 timestamp.",
     },
-    'get-incident-timeline': {
-      'id': "Missing required field: 'id'. Provide an incident ID (e.g., 'INC-123').",
+    "get-incident-timeline": {
+      id: "Missing required field: 'id'. Provide an incident ID (e.g., 'INC-123').",
     },
   };
 
@@ -279,4 +360,3 @@ function getRequiredFieldError(toolName: string, field: string): string {
 
   return `Missing required field: '${field}'`;
 }
-

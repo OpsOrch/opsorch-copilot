@@ -1,50 +1,12 @@
-import { randomUUID } from 'node:crypto';
-import { ToolCall, ToolResult, CopilotAnswer } from '../types.js';
-
-/**
- * Represents a modification made by heuristics to the planned tool calls
- */
-export interface HeuristicModification {
-  heuristicName: string;
-  action: 'inject' | 'modify' | 'remove';
-  reason: string;
-  affectedTools: string[];
-}
-
-/**
- * Traces the execution of a single tool call
- */
-export interface ToolExecutionTrace {
-  toolName: string;
-  cacheHit: boolean;
-  executionTimeMs: number;
-  resultSizeBytes: number;
-  success: boolean;
-  error?: string;
-}
-
-/**
- * Traces a single iteration of the reasoning loop
- */
-export interface IterationTrace {
-  iterationNumber: number;
-  plannedTools: ToolCall[];
-  heuristicModifications: HeuristicModification[];
-  toolExecutions: ToolExecutionTrace[];
-  durationMs: number;
-}
-
-/**
- * Complete execution trace for a copilot answer request
- */
-export interface ExecutionTrace {
-  traceId: string;
-  chatId: string;
-  startTime: number;
-  iterations: IterationTrace[];
-  finalAnswer?: CopilotAnswer;
-  endTime?: number;
-}
+import { randomUUID } from "node:crypto";
+import {
+  ToolCall,
+  CopilotAnswer,
+  HeuristicModification,
+  ToolExecutionTrace,
+  IterationTrace,
+  ExecutionTrace,
+} from "../types.js";
 
 /**
  * ExecutionTracer provides structured telemetry for copilot executions.
@@ -82,7 +44,7 @@ export class ExecutionTracer {
    */
   recordHeuristic(
     trace: ExecutionTrace,
-    modification: HeuristicModification
+    modification: HeuristicModification,
   ): void {
     const currentIteration = this.getCurrentIteration(trace);
     if (currentIteration) {
@@ -95,7 +57,7 @@ export class ExecutionTracer {
    */
   recordToolExecution(
     trace: ExecutionTrace,
-    execution: ToolExecutionTrace
+    execution: ToolExecutionTrace,
   ): void {
     const currentIteration = this.getCurrentIteration(trace);
     if (currentIteration) {
@@ -109,8 +71,11 @@ export class ExecutionTracer {
   completeIteration(trace: ExecutionTrace): void {
     const currentIteration = this.getCurrentIteration(trace);
     if (currentIteration) {
-      const iterationStart = trace.startTime + 
-        trace.iterations.slice(0, -1).reduce((sum, it) => sum + it.durationMs, 0);
+      const iterationStart =
+        trace.startTime +
+        trace.iterations
+          .slice(0, -1)
+          .reduce((sum, it) => sum + it.durationMs, 0);
       currentIteration.durationMs = Date.now() - iterationStart;
     }
   }
@@ -129,7 +94,9 @@ export class ExecutionTracer {
   /**
    * Get the current (most recent) iteration
    */
-  private getCurrentIteration(trace: ExecutionTrace): IterationTrace | undefined {
+  private getCurrentIteration(
+    trace: ExecutionTrace,
+  ): IterationTrace | undefined {
     return trace.iterations[trace.iterations.length - 1];
   }
 
@@ -140,15 +107,15 @@ export class ExecutionTracer {
     const totalDurationMs = trace.endTime ? trace.endTime - trace.startTime : 0;
     const totalToolCalls = trace.iterations.reduce(
       (sum, it) => sum + it.toolExecutions.length,
-      0
+      0,
     );
     const cacheHits = trace.iterations.reduce(
-      (sum, it) => sum + it.toolExecutions.filter(ex => ex.cacheHit).length,
-      0
+      (sum, it) => sum + it.toolExecutions.filter((ex) => ex.cacheHit).length,
+      0,
     );
     const failedTools = trace.iterations.reduce(
-      (sum, it) => sum + it.toolExecutions.filter(ex => !ex.success).length,
-      0
+      (sum, it) => sum + it.toolExecutions.filter((ex) => !ex.success).length,
+      0,
     );
 
     const telemetry = {
@@ -166,7 +133,7 @@ export class ExecutionTracer {
     console.log(`[ExecutionTrace] ${JSON.stringify(telemetry)}`);
 
     // Also log detailed trace for debugging (can be disabled in production)
-    if (process.env.COPILOT_DETAILED_TRACE === 'true') {
+    if (process.env.COPILOT_DETAILED_TRACE === "true") {
       console.log(`[ExecutionTraceDetailed] ${JSON.stringify(trace, null, 2)}`);
     }
   }

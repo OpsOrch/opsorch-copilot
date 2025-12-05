@@ -1,22 +1,13 @@
-import {
-  LlmClient,
-  LlmMessage,
-  Tool,
-  ToolCall,
-  ToolResult,
-} from '../types.js';
+import { LlmClient, LlmMessage, Tool, ToolCall, ToolResult } from "../types.js";
 import {
   buildJsonPlannerPrompt,
   buildPlannerPrompt,
   buildRefinementPrompt,
   buildToolContext,
-} from '../prompts.js';
-import { inferPlanFromQuestion } from './planFallback.js';
-import { ContextManager } from './contextManager.js';
-
-export type PlannerResponse = {
-  toolCalls: ToolCall[];
-};
+} from "../prompts.js";
+import { inferPlanFromQuestion } from "./planFallback.js";
+import { ContextManager } from "./contextManager.js";
+import { PlannerResponse } from "../types.js";
 
 const MAX_PLANNER_CALLS = 3;
 
@@ -28,31 +19,34 @@ export async function requestInitialPlan(
 ): Promise<PlannerResponse> {
   const toolContext = buildToolContext(tools);
   const messages: LlmMessage[] = [
-    { role: 'system', content: buildPlannerPrompt(toolContext) },
+    { role: "system", content: buildPlannerPrompt(toolContext) },
     ...history,
-    { role: 'user', content: question },
+    { role: "user", content: question },
   ];
 
   try {
-    const reply = await llm.chat(
-      messages,
-      tools,
-    );
+    const reply = await llm.chat(messages, tools);
 
+    // Diagnostic logging for planner
+    console.log(
+      `[Planner] Initial plan: LLM returned ${reply.toolCalls?.length ?? 0} tool call(s)`,
+    );
     if (reply.toolCalls?.length) {
+      console.log(
+        `[Planner] Initial plan: Tool names: ${reply.toolCalls.map((t) => t.name).join(", ")}`,
+      );
       return {
         toolCalls: limitCalls(reply.toolCalls),
       };
     }
 
-    // If the model didn't use tools directly, fall back to JSON-planned tool calls
-    return await requestJsonPlan(
-      question,
-      llm,
-      tools,
+    console.log(
+      `[Planner] Initial plan: No tool calls from LLM, falling back to JSON plan`,
     );
+    // If the model didn't use tools directly, fall back to JSON-planned tool calls
+    return await requestJsonPlan(question, llm, tools);
   } catch (err) {
-    console.warn('LLM planning failed, falling back to heuristics:', err);
+    console.warn("LLM planning failed, falling back to heuristics:", err);
     return {
       toolCalls: inferPlan(question),
     };
@@ -67,16 +61,16 @@ export async function requestFollowUpPlan(
   history: LlmMessage[] = [],
 ): Promise<PlannerResponse> {
   const toolContext = buildToolContext(tools);
-  const resultSummary = summarizeResults(results) || 'No tool results yet.';
+  const resultSummary = summarizeResults(results) || "No tool results yet.";
 
   const messages: LlmMessage[] = [
     {
-      role: 'system',
+      role: "system",
       content: buildRefinementPrompt(toolContext, results.length),
     },
     ...history,
     {
-      role: 'user',
+      role: "user",
       content:
         `Question: ${question}\n` +
         `Tool results (count=${results.length}):\n` +
@@ -88,6 +82,16 @@ export async function requestFollowUpPlan(
   try {
     const reply = await llm.chat(messages, tools);
 
+    // Diagnostic logging for follow-up planner
+    console.log(
+      `[Planner] Follow-up plan: LLM returned ${reply.toolCalls?.length ?? 0} tool call(s)`,
+    );
+    if (reply.toolCalls?.length) {
+      console.log(
+        `[Planner] Follow-up plan: Tool names: ${reply.toolCalls.map((t) => t.name).join(", ")}`,
+      );
+    }
+
     if (!reply.toolCalls || reply.toolCalls.length === 0) {
       return { toolCalls: [] };
     }
@@ -96,7 +100,7 @@ export async function requestFollowUpPlan(
       toolCalls: limitCalls(reply.toolCalls),
     };
   } catch (err) {
-    console.error('LLM refinement failed; skipping follow-up plan:', err);
+    console.error("LLM refinement failed; skipping follow-up plan:", err);
     return { toolCalls: [] };
   }
 }
@@ -106,10 +110,10 @@ async function requestJsonPlan(
   llm: LlmClient,
   tools: Tool[],
 ): Promise<PlannerResponse> {
-  const toolList = tools.map((t) => `- ${t.name}`).join('\n') || 'No tools.';
+  const toolList = tools.map((t) => `- ${t.name}`).join("\n") || "No tools.";
   const messages: LlmMessage[] = [
-    { role: 'system', content: buildJsonPlannerPrompt(toolList) },
-    { role: 'user', content: `User request: ${question}\nReturn only JSON.` },
+    { role: "system", content: buildJsonPlannerPrompt(toolList) },
+    { role: "user", content: `User request: ${question}\nReturn only JSON.` },
   ];
 
   try {
@@ -122,7 +126,7 @@ async function requestJsonPlan(
     }
     return { toolCalls: [] };
   } catch (err) {
-    console.warn('LLM JSON planner failed:', err);
+    console.warn("LLM JSON planner failed:", err);
   }
 
   return {
@@ -130,32 +134,29 @@ async function requestJsonPlan(
   };
 }
 
+import { HandlerUtils } from "./handlers/utils.js";
+
 function parseToolCalls(raw?: string): ToolCall[] {
-  if (!raw) return [];
-  const jsonMatch = raw.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) return [];
-
-  try {
-    const parsed = JSON.parse(jsonMatch[0] || '{}') as {
-      toolCalls?: Array<{ name?: string; arguments?: any }>;
-    };
-
-    const calls = Array.isArray(parsed.toolCalls) ? parsed.toolCalls : [];
-    return calls
-      .map((call) => {
-        if (!call?.name || typeof call.name !== 'string') return undefined;
-        const args =
-          call.arguments &&
-            typeof call.arguments === 'object' &&
-            !Array.isArray(call.arguments)
-            ? call.arguments
-            : {};
-        return { name: call.name, arguments: args } as ToolCall;
-      })
-      .filter(Boolean) as ToolCall[];
-  } catch {
+  const parsed = HandlerUtils.extractAndParseJson(raw);
+  if (!parsed || typeof parsed !== 'object' || !('toolCalls' in parsed) || !Array.isArray(parsed.toolCalls)) {
     return [];
   }
+
+  const calls = parsed.toolCalls as unknown[];
+  return calls
+    .map((call: unknown) => {
+      if (!call || typeof call !== 'object' || !('name' in call)) return undefined;
+      const c = call as Record<string, unknown>;
+      if (typeof c.name !== "string") return undefined;
+      const args =
+        c.arguments &&
+          typeof c.arguments === "object" &&
+          !Array.isArray(c.arguments)
+          ? c.arguments as Record<string, unknown>
+          : {};
+      return { name: c.name, arguments: args } as ToolCall;
+    })
+    .filter(Boolean) as ToolCall[];
 }
 
 function limitCalls(calls: ToolCall[]): ToolCall[] {

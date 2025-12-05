@@ -7,8 +7,10 @@
   "scripts": {
     "build": "tsc --noEmit false",
     "dev": "node --loader ts-node/esm src/server.ts",
-    "lint": "tsc --noEmit",
-    "test": "NODE_ENV=test node --test --loader ts-node/esm tests/*.test.ts",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "type-check": "tsc --noEmit",
+    "test": "NODE_ENV=test node --test --loader ts-node/esm",
     "start": "node --loader ts-node/esm src/server.ts",
     "seed": "node --loader ts-node/esm scripts/seedDatabase.ts"
   },
@@ -18,11 +20,16 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.1",
     "@types/better-sqlite3": "^7.6.13",
     "@types/express": "^5.0.5",
     "@types/node": "^22.9.4",
+    "eslint": "^9.39.1",
+    "fast-check": "^4.3.0",
+    "globals": "^16.5.0",
     "supertest": "^7.0.0",
     "ts-node": "^10.9.2",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.48.1"
   }
 }

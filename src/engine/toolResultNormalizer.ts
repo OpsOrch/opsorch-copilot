@@ -1,15 +1,17 @@
-import { JsonObject, JsonValue } from '../types.js';
+import { JsonObject, JsonValue } from "../types.js";
 
 function tryParseJsonString(text: string): JsonValue | undefined {
   const trimmed = text.trim();
-  if (!trimmed) return '';
+  if (!trimmed) return "";
   try {
     return JSON.parse(trimmed) as JsonValue;
-  } catch {}
+  } catch {
+    // Ignore JSON parsing errors
+  }
   return undefined;
 }
 
-function normalizeContentArray(items: any[]): JsonValue {
+function normalizeContentArray(items: unknown[]): JsonValue {
   const normalized = items
     .map((item) => normalizeContentEntry(item))
     .filter((item): item is JsonValue => item !== undefined);
@@ -17,23 +19,28 @@ function normalizeContentArray(items: any[]): JsonValue {
   return normalized.length === 1 ? normalized[0] : (normalized as JsonValue);
 }
 
-function normalizeContentEntry(entry: any): JsonValue | undefined {
+function normalizeContentEntry(entry: unknown): JsonValue | undefined {
   if (entry === undefined || entry === null) return undefined;
-  if (typeof entry === 'string' || typeof entry === 'number' || typeof entry === 'boolean') {
+  if (
+    typeof entry === "string" ||
+    typeof entry === "number" ||
+    typeof entry === "boolean"
+  ) {
     return normalizeToolResultPayload(entry);
   }
   if (Array.isArray(entry)) {
     return normalizeToolResultPayload(entry);
   }
-  if (typeof entry === 'object') {
-    if (typeof entry.text === 'string') {
-      return tryParseJsonString(entry.text) ?? entry.text;
+  if (typeof entry === "object") {
+    const typedEntry = entry as Record<string, unknown>;
+    if (typeof typedEntry.text === "string") {
+      return tryParseJsonString(typedEntry.text) ?? typedEntry.text;
     }
-    if (entry.data !== undefined) {
-      return normalizeToolResultPayload(entry.data);
+    if (typedEntry.data !== undefined) {
+      return normalizeToolResultPayload(typedEntry.data);
     }
-    if (entry.json !== undefined) {
-      return normalizeToolResultPayload(entry.json);
+    if (typedEntry.json !== undefined) {
+      return normalizeToolResultPayload(typedEntry.json);
     }
     return normalizeToolResultPayload(entry);
   }
@@ -44,16 +51,16 @@ export function normalizeToolResultPayload(payload: unknown): JsonValue {
   if (payload === undefined || payload === null) {
     return null;
   }
-  if (typeof payload === 'string') {
+  if (typeof payload === "string") {
     return tryParseJsonString(payload) ?? payload;
   }
-  if (typeof payload === 'number' || typeof payload === 'boolean') {
+  if (typeof payload === "number" || typeof payload === "boolean") {
     return payload;
   }
   if (Array.isArray(payload)) {
     return payload.map((item) => normalizeToolResultPayload(item)) as JsonValue;
   }
-  if (typeof payload === 'object') {
+  if (typeof payload === "object") {
     const record = payload as Record<string, unknown>;
 
     if (record.structuredContent !== undefined) {
@@ -65,7 +72,7 @@ export function normalizeToolResultPayload(payload: unknown): JsonValue {
 
     if (Array.isArray(record.content)) {
       const normalizedContent = normalizeContentArray(record.content);
-      const extraKeys = Object.keys(record).filter((key) => key !== 'content');
+      const extraKeys = Object.keys(record).filter((key) => key !== "content");
       if (!extraKeys.length) {
         return normalizedContent;
       }

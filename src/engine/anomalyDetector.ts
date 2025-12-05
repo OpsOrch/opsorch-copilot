@@ -1,29 +1,35 @@
-import { ToolResult, MetricSeries, Anomaly, Trend } from '../types.js';
-import { DomainRegistry } from './domainRegistry.js';
-import { isValidTimestamp, normalizeTimestamp } from './timestampUtils.js';
+import {
+  ToolResult,
+  MetricSeries,
+  Anomaly,
+  Trend,
+  HandlerContext,
+  JsonObject,
+} from "../types.js";
+import { isValidTimestamp, normalizeTimestamp } from "./timestampUtils.js";
+import {
+  metricAnomalyHandler,
+  detectTrends,
+  compareServices,
+} from "./handlers/metric/anomalyHandler.js";
 
-const OUTLIER_THRESHOLD = 2; // Standard deviations
-const SPIKE_THRESHOLD = 0.5; // 50% increase
-const DROP_THRESHOLD = 0.5; // 50% decrease
-const TREND_MIN_POINTS = 3;
+// Known metric tools
+const METRIC_TOOLS = ["query-metrics"];
 
 /**
  * AnomalyDetector identifies anomalies and trends in metric time series data
  * to help the LLM focus on significant patterns rather than raw data analysis.
  */
 export class AnomalyDetector {
-  constructor(private registry: DomainRegistry) { }
-
   /**
-   * Extract metric series from tool results using domain registry
+   * Extract metric series from tool results
    */
   extractMetricSeries(results: ToolResult[]): MetricSeries[] {
     const series: MetricSeries[] = [];
 
     for (const result of results) {
-      // Check if tool belongs to metric domain
-      const domain = this.registry.getDomainForTool(result.name);
-      if (domain?.name === 'metric') {
+      // Check if tool is a metric tool
+      if (this.isMetricTool(result.name)) {
         series.push(...this.parseMetricResult(result));
       }
     }
@@ -32,166 +38,64 @@ export class AnomalyDetector {
   }
 
   /**
-   * Detect anomalies using statistical methods
+   * Check if a tool is a metric tool
    */
-  detectAnomalies(series: MetricSeries): Anomaly[] {
-    const anomalies: Anomaly[] = [];
+  private isMetricTool(toolName: string): boolean {
+    return METRIC_TOOLS.includes(toolName) || toolName.includes("metric");
+  }
 
-    if (series.values.length < 3) {
-      return anomalies;
-    }
+  /**
+   * Detect anomalies using statistical methods
+   * Delegates to metric anomaly handler
+   */
+  async detectAnomalies(series: MetricSeries): Promise<Anomaly[]> {
+    const context: HandlerContext = {
+      chatId: "anomaly-detection",
+      turnNumber: 1,
+      conversationHistory: [],
+      toolResults: [],
+      userQuestion: "",
+    };
 
-    const stats = this.calculateStatistics(series.values);
-
-    for (let i = 0; i < series.values.length; i++) {
-      const value = series.values[i];
-      const timestamp = series.timestamps[i];
-
-      if (!timestamp) continue;
-
-      const deviationFromMean = Math.abs(value - stats.mean);
-      const isOutlier = deviationFromMean > OUTLIER_THRESHOLD * stats.stdDev;
-
-      if (isOutlier) {
-        const severity = this.calculateSeverity(deviationFromMean, stats.stdDev);
-
-        anomalies.push({
-          timestamp,
-          value,
-          type: 'outlier',
-          severity,
-          deviationFromMean,
-          metric: series.expression,
-        });
-      }
-
-      if (i > 0) {
-        const prevValue = series.values[i - 1];
-        const changeRatio = Math.abs(value - prevValue) / Math.abs(prevValue);
-
-        if (changeRatio > SPIKE_THRESHOLD && value > prevValue) {
-          const severity = changeRatio > 1.0 ? 'high' : changeRatio > 0.8 ? 'medium' : 'low';
-
-          anomalies.push({
-            timestamp,
-            value,
-            type: 'spike',
-            severity,
-            deviationFromMean,
-            metric: series.expression,
-          });
-        } else if (changeRatio > DROP_THRESHOLD && value < prevValue) {
-          const severity = changeRatio > 1.0 ? 'high' : changeRatio > 0.8 ? 'medium' : 'low';
-
-          anomalies.push({
-            timestamp,
-            value,
-            type: 'drop',
-            severity,
-            deviationFromMean,
-            metric: series.expression,
-          });
-        }
-      }
-    }
-
-    anomalies.sort((a, b) => {
-      const severityOrder = { high: 3, medium: 2, low: 1 };
-      const severityDiff = severityOrder[b.severity] - severityOrder[a.severity];
-      if (severityDiff !== 0) return severityDiff;
-
-      return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime();
-    });
-
-    return anomalies;
+    return await metricAnomalyHandler(context, [series]);
   }
 
   /**
    * Identify trends in time series
+   * Delegates to metric anomaly handler
    */
   detectTrends(series: MetricSeries): Trend[] {
-    const trends: Trend[] = [];
-
-    if (series.values.length < TREND_MIN_POINTS) {
-      return trends;
-    }
-
-    const slope = this.calculateSlope(series.values);
-    const confidence = this.calculateTrendConfidence(series.values, slope);
-
-    if (confidence > 0.6) {
-      let direction: Trend['direction'];
-
-      if (Math.abs(slope) < 0.01) {
-        direction = 'stable';
-      } else if (slope > 0) {
-        direction = 'increasing';
-      } else {
-        direction = 'decreasing';
-      }
-
-      trends.push({
-        direction,
-        confidence,
-        startTimestamp: series.timestamps[0],
-        endTimestamp: series.timestamps[series.timestamps.length - 1],
-        metric: series.expression,
-      });
-    }
-
-    return trends;
+    return detectTrends(series);
   }
 
   /**
    * Compare metrics across services
+   * Delegates to metric anomaly handler
    */
   compareServices(seriesList: MetricSeries[]): {
     service: string;
     severity: number;
   }[] {
-    const serviceScores = new Map<string, number>();
-
-    for (const series of seriesList) {
-      const service = series.service || 'unknown';
-      const anomalies = this.detectAnomalies(series);
-
-      let score = 0;
-      for (const anomaly of anomalies) {
-        switch (anomaly.severity) {
-          case 'high': score += 3; break;
-          case 'medium': score += 2; break;
-          case 'low': score += 1; break;
-        }
-      }
-
-      const currentScore = serviceScores.get(service) || 0;
-      serviceScores.set(service, currentScore + score);
-    }
-
-    const results = Array.from(serviceScores.entries())
-      .map(([service, severity]) => ({ service, severity }))
-      .sort((a, b) => b.severity - a.severity);
-
-    return results;
+    return compareServices(seriesList);
   }
 
   private parseMetricResult(result: ToolResult): MetricSeries[] {
     const series: MetricSeries[] = [];
     const payload = result.result;
 
-    if (!payload || typeof payload !== 'object') {
+    if (!payload || typeof payload !== "object") {
       return series;
     }
 
-    const data = this.findMetricData(payload);
+    // MCP metric tool (query-metrics or describe-metrics) returns array of MetricSeriesSchema
+    // MetricSeriesSchema: { name: string, points: { timestamp: string, value: number }[], ... }
+    const data = Array.isArray(payload) ? payload : [];
 
-    if (data && Array.isArray(data)) {
-      for (const item of data) {
-        if (typeof item === 'object' && item !== null) {
-          const parsed = this.parseMetricItem(item, result.arguments);
-          if (parsed) {
-            series.push(parsed);
-          }
+    for (const item of data) {
+      if (typeof item === "object" && item !== null && !Array.isArray(item)) {
+        const parsed = this.parseMetricItem(item as JsonObject, result.arguments);
+        if (parsed) {
+          series.push(parsed);
         }
       }
     }
@@ -199,54 +103,22 @@ export class AnomalyDetector {
     return series;
   }
 
-  private findMetricData(payload: any): any[] | null {
-    const fields = ['series', 'data', 'results', 'metrics', 'values'];
-
-    for (const field of fields) {
-      if (payload[field] && Array.isArray(payload[field])) {
-        return payload[field];
-      }
-    }
-
-    if (Array.isArray(payload)) {
-      return payload;
-    }
-
-    return null;
-  }
-
-  private parseMetricItem(item: any, args: any): MetricSeries | null {
+  private parseMetricItem(item: JsonObject, args: JsonObject | undefined): MetricSeries | null {
     const timestamps: string[] = [];
     const values: number[] = [];
 
-    if (item.values && Array.isArray(item.values)) {
-      for (const point of item.values) {
-        if (Array.isArray(point) && point.length >= 2) {
-          const [ts, val] = point;
-          if (isValidTimestamp(ts) && typeof val === 'number') {
-            timestamps.push(normalizeTimestamp(ts));
-            values.push(val);
-          }
-        }
-      }
-    } else if (item.datapoints && Array.isArray(item.datapoints)) {
-      for (const point of item.datapoints) {
-        if (Array.isArray(point) && point.length >= 2) {
-          const [val, ts] = point;
-          if (typeof val === 'number' && isValidTimestamp(ts)) {
-            timestamps.push(normalizeTimestamp(ts));
-            values.push(val);
-          }
-        }
-      }
-    } else if (item.timestamps && item.data) {
-      const ts = Array.isArray(item.timestamps) ? item.timestamps : [];
-      const vals = Array.isArray(item.data) ? item.data : [];
+    // MCP metricSeriesSchema uses "points" array with { timestamp, value }
+    if (item.points && Array.isArray(item.points)) {
+      for (const point of item.points) {
+        if (typeof point === "object" && point !== null) {
+          const p = point as JsonObject;
+          const ts = p.timestamp as string;
+          const val = p.value as number;
 
-      for (let i = 0; i < Math.min(ts.length, vals.length); i++) {
-        if (isValidTimestamp(ts[i]) && typeof vals[i] === 'number') {
-          timestamps.push(normalizeTimestamp(ts[i]));
-          values.push(vals[i]);
+          if (isValidTimestamp(ts) && typeof val === "number") {
+            timestamps.push(normalizeTimestamp(ts));
+            values.push(val);
+          }
         }
       }
     }
@@ -255,62 +127,37 @@ export class AnomalyDetector {
       return null;
     }
 
+    // Get expression string from MCP metricSeriesSchema "name" field
+    const getExpressionString = (): string => {
+      // MCP metricSeriesSchema: name (z.string())
+      if (typeof item.name === "string") return item.name;
+
+      // Fallback relative to query arguments if name is missing (rare/malformed)
+      if (typeof args?.expression === "string") return args.expression;
+      if (args?.expression && typeof args.expression === "object") {
+        const expr = args.expression as JsonObject;
+        if (typeof expr.metricName === "string") return expr.metricName;
+      }
+      return "unknown";
+    };
+
+    // Get service string if available
+    const getServiceString = (): string | undefined => {
+      // MCP metricSeriesSchema doesn't explicitly have service, 
+      // but might be in tool args scope
+      if (args?.scope && typeof args.scope === "object") {
+        const scope = args.scope as JsonObject;
+        if (typeof scope.service === "string") return scope.service;
+      }
+      if (typeof args?.service === "string") return args.service;
+      return undefined;
+    };
+
     return {
       timestamps,
       values,
-      expression: item.metric || item.target || item.name || args?.expression || 'unknown',
-      service: args?.service || item.service,
+      expression: getExpressionString(),
+      service: getServiceString(),
     };
-  }
-
-  private calculateStatistics(values: number[]): {
-    mean: number;
-    stdDev: number;
-    min: number;
-    max: number;
-  } {
-    const mean = values.reduce((sum, val) => sum + val, 0) / values.length;
-    const variance = values.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / values.length;
-    const stdDev = Math.sqrt(variance);
-    const min = Math.min(...values);
-    const max = Math.max(...values);
-
-    return { mean, stdDev, min, max };
-  }
-
-  private calculateSeverity(deviation: number, stdDev: number): Anomaly['severity'] {
-    const deviationRatio = deviation / stdDev;
-
-    if (deviationRatio > 3) return 'high';
-    if (deviationRatio > 2.5) return 'medium';
-    return 'low';
-  }
-
-  private calculateSlope(values: number[]): number {
-    const n = values.length;
-    const xSum = (n * (n - 1)) / 2;
-    const ySum = values.reduce((sum, val) => sum + val, 0);
-    const xySum = values.reduce((sum, val, i) => sum + i * val, 0);
-    const xxSum = values.reduce((sum, _, i) => sum + i * i, 0);
-
-    const slope = (n * xySum - xSum * ySum) / (n * xxSum - xSum * xSum);
-    return slope;
-  }
-
-  private calculateTrendConfidence(values: number[], slope: number): number {
-    const mean = values.reduce((sum, val) => sum + val, 0) / values.length;
-    const yIntercept = mean - slope * (values.length - 1) / 2;
-
-    let totalSumSquares = 0;
-    let residualSumSquares = 0;
-
-    for (let i = 0; i < values.length; i++) {
-      const predicted = yIntercept + slope * i;
-      totalSumSquares += Math.pow(values[i] - mean, 2);
-      residualSumSquares += Math.pow(values[i] - predicted, 2);
-    }
-
-    const rSquared = 1 - (residualSumSquares / totalSumSquares);
-    return Math.max(0, Math.min(1, rSquared));
   }
 }

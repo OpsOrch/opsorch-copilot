@@ -1,24 +1,20 @@
-import './setup.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { CorrelationDetector, CorrelationEvent } from '../src/engine/correlationDetector.js';
-import { domainRegistry } from '../src/engine/domainRegistry.js';
-import { ToolResult } from '../src/types.js';
+import { CorrelationDetector } from '../src/engine/correlationDetector.js';
+import { CorrelationEvent, ToolResult } from '../src/types.js';
 
 test('CorrelationDetector: extracts events from tool results', () => {
-  const detector = new CorrelationDetector(domainRegistry);
+  const detector = new CorrelationDetector();
   const results: ToolResult[] = [
     {
       name: 'query-logs',
-      result: {
-        entries: [
-          { timestamp: '2024-01-01T10:00:00Z', message: 'error' },
-          { timestamp: '2024-01-01T10:00:01Z', message: 'error' },
-          { timestamp: '2024-01-01T10:00:02Z', message: 'error' },
-          { timestamp: '2024-01-01T10:00:03Z', message: 'error' },
-          { timestamp: '2024-01-01T10:00:04Z', message: 'error' },
-        ],
-      },
+      result: [
+        { timestamp: '2024-01-01T10:00:00Z', message: 'error' },
+        { timestamp: '2024-01-01T10:00:01Z', message: 'error' },
+        { timestamp: '2024-01-01T10:00:02Z', message: 'error' },
+        { timestamp: '2024-01-01T10:00:03Z', message: 'error' },
+        { timestamp: '2024-01-01T10:00:04Z', message: 'error' },
+      ],
     },
   ];
 
@@ -29,7 +25,7 @@ test('CorrelationDetector: extracts events from tool results', () => {
 });
 
 test('CorrelationDetector: detects correlations between events', () => {
-  const detector = new CorrelationDetector(domainRegistry);
+  const detector = new CorrelationDetector();
   const events: CorrelationEvent[] = [
     {
       timestamp: '2024-01-01T10:00:00Z',
@@ -53,7 +49,7 @@ test('CorrelationDetector: detects correlations between events', () => {
 });
 
 test('CorrelationDetector: identifies root cause', () => {
-  const detector = new CorrelationDetector(domainRegistry);
+  const detector = new CorrelationDetector();
   const events: CorrelationEvent[] = [
     {
       timestamp: '2024-01-01T10:00:00Z',
@@ -75,23 +71,21 @@ test('CorrelationDetector: identifies root cause', () => {
 });
 
 test('CorrelationDetector: handles empty results', () => {
-  const detector = new CorrelationDetector(domainRegistry);
+  const detector = new CorrelationDetector();
   const events = detector.extractEvents([]);
 
   assert.equal(events.length, 0);
 });
 
 test('CorrelationDetector: sorts events by timestamp', () => {
-  const detector = new CorrelationDetector(domainRegistry);
+  const detector = new CorrelationDetector();
   const results: ToolResult[] = [
     {
       name: 'get-incident-timeline',
-      result: {
-        events: [
-          { timestamp: '2024-01-01T10:05:00Z', kind: 'severity_change' },
-          { timestamp: '2024-01-01T10:00:00Z', kind: 'status_change' },
-        ],
-      },
+      result: [
+        { at: '2024-01-01T10:05:00Z', kind: 'severity_change' },
+        { at: '2024-01-01T10:00:00Z', kind: 'status_change' },
+      ],
     },
   ];
 

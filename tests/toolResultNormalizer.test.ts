@@ -67,18 +67,18 @@ test('normalizeToolResultPayload handles content arrays', () => {
       { type: 'text', text: 'world' },
     ],
   };
-  const result = normalizeToolResultPayload(input) as any;
+  const result = normalizeToolResultPayload(input);
   // Content arrays are normalized - check that result exists and has content
   assert.ok(result, 'Should return a result');
   // The normalizer processes content arrays into a simpler format
-  assert.ok(result.content !== undefined || Array.isArray(result));
+  assert.ok(typeof result === 'object' && (result as Record<string, unknown>).content !== undefined || Array.isArray(result));
 });
 
 test('normalizeToolResultPayload parses JSON in text content', () => {
   const input = {
     content: [{ type: 'text', text: '{"key": "value"}' }],
   };
-  const result = normalizeToolResultPayload(input) as any;
+  const result = normalizeToolResultPayload(input);
   assert.deepEqual(result, { key: 'value' });
 });
 
@@ -86,7 +86,7 @@ test('normalizeToolResultPayload handles data field', () => {
   const input = {
     content: [{ data: { incidents: [] } }],
   };
-  const result = normalizeToolResultPayload(input) as any;
+  const result = normalizeToolResultPayload(input);
   assert.deepEqual(result, { incidents: [] });
 });
 
@@ -95,7 +95,7 @@ test('normalizeToolResultPayload filters undefined values', () => {
     defined: 'yes',
     undefined: undefined,
   };
-  const result = normalizeToolResultPayload(input) as any;
+  const result = normalizeToolResultPayload(input);
   assert.deepEqual(result, { defined: 'yes' });
 });
 
@@ -125,9 +125,9 @@ test('normalizeToolResultPayload handles mixed content array', () => {
     extra: 'field',
   };
 
-  const result = normalizeToolResultPayload(input) as any;
-  assert.ok(result.content);
-  assert.equal(result.extra, 'field');
+  const result = normalizeToolResultPayload(input);
+  assert.ok(typeof result === 'object' && result !== null && (result as Record<string, unknown>).content);
+  assert.equal((result as Record<string, unknown>).extra, 'field');
 });
 
 test('normalizeToolResultPayload converts unknown types to strings', () => {

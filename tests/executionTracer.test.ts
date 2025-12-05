@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { ExecutionTracer, HeuristicModification, ToolExecutionTrace } from '../src/engine/executionTracer.js';
-import { ToolCall, CopilotAnswer } from '../src/types.js';
+import { ExecutionTracer } from '../src/engine/executionTracer.js';
+import { ToolCall, CopilotAnswer, HeuristicModification, ToolExecutionTrace } from '../src/types.js';
 
 test('ExecutionTracer: creates trace with unique ID', () => {
   const tracer = new ExecutionTracer();

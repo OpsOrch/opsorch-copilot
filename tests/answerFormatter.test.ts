@@ -1,4 +1,3 @@
-import './setup.js'; // Load domain configurations
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { formatAnswer, formatEvidence, calculateConfidence } from '../src/engine/answerFormatter.js';
@@ -59,7 +58,7 @@ test('calculateConfidence returns 0.85 for three or more results', () => {
 
 test('formatAnswer throws on missing chatId', () => {
     assert.throws(() => {
-        formatAnswer('test', [], '' as any);
+        formatAnswer('test', [], '');
     }, /chatId is required/);
 });
 

@@ -1,13 +1,11 @@
-import './setup.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { ParallelToolRunner, ToolDependency } from '../src/engine/parallelToolRunner.js';
-import { domainRegistry } from '../src/engine/domainRegistry.js';
-import { ToolCall, Tool, ToolResult } from '../src/types.js';
+import { ParallelToolRunner } from '../src/engine/parallelToolRunner.js';
+import { ToolCall, Tool, ToolCallDependency } from '../src/types.js';
 import { MockMcp } from '../src/mcps/mock.js';
 
 test('ParallelToolRunner: identifies no dependencies for independent tools', () => {
-  const runner = new ParallelToolRunner(domainRegistry);
+  const runner = new ParallelToolRunner();
   const calls: ToolCall[] = [
     { name: 'query-logs', arguments: { query: 'error' } },
     { name: 'query-metrics', arguments: { expression: 'cpu' } },
@@ -23,7 +21,7 @@ test('ParallelToolRunner: identifies no dependencies for independent tools', () 
 });
 
 test('ParallelToolRunner: identifies timeline dependency on incident query', () => {
-  const runner = new ParallelToolRunner(domainRegistry);
+  const runner = new ParallelToolRunner();
   const calls: ToolCall[] = [
     { name: 'query-incidents', arguments: { limit: 1 } },
     { name: 'get-incident-timeline', arguments: {} }, // No explicit ID
@@ -37,7 +35,7 @@ test('ParallelToolRunner: identifies timeline dependency on incident query', () 
 });
 
 test('ParallelToolRunner: no dependency when timeline has explicit ID', () => {
-  const runner = new ParallelToolRunner(domainRegistry);
+  const runner = new ParallelToolRunner();
   const calls: ToolCall[] = [
     { name: 'query-incidents', arguments: { limit: 1 } },
     { name: 'get-incident-timeline', arguments: { id: 'INC-123' } },
@@ -51,7 +49,7 @@ test('ParallelToolRunner: no dependency when timeline has explicit ID', () => {
 });
 
 test('ParallelToolRunner: identifies get-ticket dependency on query-tickets', () => {
-  const runner = new ParallelToolRunner(domainRegistry);
+  const runner = new ParallelToolRunner();
   const calls: ToolCall[] = [
     { name: 'query-tickets', arguments: { query: 'bug' } },
     { name: 'get-ticket', arguments: {} }, // No explicit ID
@@ -65,7 +63,7 @@ test('ParallelToolRunner: identifies get-ticket dependency on query-tickets', ()
 });
 
 test('ParallelToolRunner: can execute independent tools in parallel', () => {
-  const runner = new ParallelToolRunner(domainRegistry);
+  const runner = new ParallelToolRunner();
   const calls: ToolCall[] = [
     { name: 'query-logs', arguments: {} },
     { name: 'query-metrics', arguments: {} },
@@ -77,7 +75,7 @@ test('ParallelToolRunner: can execute independent tools in parallel', () => {
 });
 
 test('ParallelToolRunner: cannot execute dependent tools in parallel', () => {
-  const runner = new ParallelToolRunner(domainRegistry);
+  const runner = new ParallelToolRunner();
   const calls: ToolCall[] = [
     { name: 'query-incidents', arguments: {} },
     { name: 'get-incident-timeline', arguments: {} },
@@ -89,8 +87,8 @@ test('ParallelToolRunner: cannot execute dependent tools in parallel', () => {
 });
 
 test('ParallelToolRunner: groups independent tools into single batch', () => {
-  const runner = new ParallelToolRunner(domainRegistry);
-  const dependencies: ToolDependency[] = [
+  const runner = new ParallelToolRunner();
+  const dependencies: ToolCallDependency[] = [
     { tool: { name: 'query-logs', arguments: {} }, dependsOn: [] },
     { tool: { name: 'query-metrics', arguments: {} }, dependsOn: [] },
     { tool: { name: 'query-services', arguments: {} }, dependsOn: [] },
@@ -103,8 +101,8 @@ test('ParallelToolRunner: groups independent tools into single batch', () => {
 });
 
 test('ParallelToolRunner: groups dependent tools into multiple batches', () => {
-  const runner = new ParallelToolRunner(domainRegistry);
-  const dependencies: ToolDependency[] = [
+  const runner = new ParallelToolRunner();
+  const dependencies: ToolCallDependency[] = [
     { tool: { name: 'query-incidents', arguments: {} }, dependsOn: [] },
     {
       tool: { name: 'get-incident-timeline', arguments: {} },
@@ -121,7 +119,7 @@ test('ParallelToolRunner: groups dependent tools into multiple batches', () => {
 });
 
 test('ParallelToolRunner: executes independent tools in parallel', async () => {
-  const runner = new ParallelToolRunner(domainRegistry);
+  const runner = new ParallelToolRunner();
   const executionOrder: string[] = [];
 
   const mcp = new MockMcp(
@@ -137,7 +135,7 @@ test('ParallelToolRunner: executes independent tools in parallel', async () => {
     }
   );
 
-  const dependencies: ToolDependency[] = [
+  const dependencies: ToolCallDependency[] = [
     { tool: { name: 'query-logs', arguments: {} }, dependsOn: [] },
     { tool: { name: 'query-metrics', arguments: {} }, dependsOn: [] },
   ];
@@ -156,7 +154,7 @@ test('ParallelToolRunner: executes independent tools in parallel', async () => {
 });
 
 test('ParallelToolRunner: executes dependent tools in correct order', async () => {
-  const runner = new ParallelToolRunner(domainRegistry);
+  const runner = new ParallelToolRunner();
   const executionOrder: string[] = [];
 
   const mcp = new MockMcp(
@@ -170,7 +168,7 @@ test('ParallelToolRunner: executes dependent tools in correct order', async () =
     }
   );
 
-  const dependencies: ToolDependency[] = [
+  const dependencies: ToolCallDependency[] = [
     { tool: { name: 'query-incidents', arguments: {} }, dependsOn: [] },
     {
       tool: { name: 'get-incident-timeline', arguments: {} },
@@ -192,7 +190,7 @@ test('ParallelToolRunner: executes dependent tools in correct order', async () =
 });
 
 test('ParallelToolRunner: handles mixed parallel and sequential execution', async () => {
-  const runner = new ParallelToolRunner(domainRegistry);
+  const runner = new ParallelToolRunner();
   const executionOrder: string[] = [];
 
   const mcp = new MockMcp(
@@ -207,7 +205,7 @@ test('ParallelToolRunner: handles mixed parallel and sequential execution', asyn
     }
   );
 
-  const dependencies: ToolDependency[] = [
+  const dependencies: ToolCallDependency[] = [
     { tool: { name: 'query-incidents', arguments: {} }, dependsOn: [] },
     { tool: { name: 'query-logs', arguments: {} }, dependsOn: [] },
     {
@@ -235,7 +233,7 @@ test('ParallelToolRunner: handles mixed parallel and sequential execution', asyn
 });
 
 test('ParallelToolRunner: handles empty tool list', async () => {
-  const runner = new ParallelToolRunner(domainRegistry);
+  const runner = new ParallelToolRunner();
   const mcp = new MockMcp(
     async () => [],
     async () => ({ name: 'test', result: {} })
@@ -247,7 +245,7 @@ test('ParallelToolRunner: handles empty tool list', async () => {
 });
 
 test('ParallelToolRunner: handles tool execution errors gracefully', async () => {
-  const runner = new ParallelToolRunner(domainRegistry);
+  const runner = new ParallelToolRunner();
 
   const mcp = new MockMcp(
     async () => [
@@ -262,7 +260,7 @@ test('ParallelToolRunner: handles tool execution errors gracefully', async () =>
     }
   );
 
-  const dependencies: ToolDependency[] = [
+  const dependencies: ToolCallDependency[] = [
     { tool: { name: 'query-logs', arguments: {} }, dependsOn: [] },
     { tool: { name: 'query-metrics', arguments: {} }, dependsOn: [] },
   ];
@@ -290,7 +288,7 @@ test('ParallelToolRunner: handles tool execution errors gracefully', async () =>
 });
 
 test('ParallelToolRunner: handles circular dependencies gracefully', async () => {
-  const runner = new ParallelToolRunner(domainRegistry);
+  const runner = new ParallelToolRunner();
 
   const mcp = new MockMcp(
     async () => [
@@ -301,7 +299,7 @@ test('ParallelToolRunner: handles circular dependencies gracefully', async () =>
   );
 
   // Manually create circular dependency (shouldn't happen in practice)
-  const dependencies: ToolDependency[] = [
+  const dependencies: ToolCallDependency[] = [
     { tool: { name: 'tool-a', arguments: {} }, dependsOn: ['tool-b'] },
     { tool: { name: 'tool-b', arguments: {} }, dependsOn: ['tool-a'] },
   ];

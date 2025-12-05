@@ -85,7 +85,18 @@ This separation ensures:
 - Core stays deterministic & reliable  
 - MCP stays minimal & typed  
 - Copilot can use any LLM  
-- UI can evolve independently  
+- UI can evolve independently
+
+---
+
+## 📏 7. Code Quality Standards
+
+**Type Safety:**
+- **Never use `any` types** - Always use specific TypeScript types
+- Use `unknown` for truly unknown data, then narrow with type guards
+- Leverage existing types from `src/types.ts` when available
+- Create proper interfaces for external library types instead of using `any`
+- Use type assertions only when absolutely necessary and with specific types  
 
 ---
 

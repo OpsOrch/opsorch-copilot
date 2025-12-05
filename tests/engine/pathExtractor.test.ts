@@ -63,7 +63,8 @@ test('extractByPath - root object with $', () => {
 
 test('extractByPath - filters out null/undefined values', () => {
     const obj = { a: 'value', b: null, c: undefined, d: 'another' };
-    const result = extractByPath(obj, '$');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = extractByPath(obj as any, '$');
     assert.equal(result.length, 1);
     assert.deepEqual(result[0], obj);
 });

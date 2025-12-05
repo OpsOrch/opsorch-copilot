@@ -1,4 +1,4 @@
-import { describe, it, before, after } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert';
 import { mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
@@ -12,7 +12,7 @@ import { Conversation, ConversationConfig } from '../src/types.js';
 function createTempDb(): { path: string; cleanup: () => void } {
     const tempDir = mkdtempSync(join(tmpdir(), 'sqlite-test-'));
     const dbPath = join(tempDir, 'test.db');
-    
+
     return {
         path: dbPath,
         cleanup: () => {
@@ -54,11 +54,11 @@ describe('SqliteConversationStore', () => {
     describe('Initialization and Schema', () => {
         it('should create database file and schema', async () => {
             const { path, cleanup } = createTempDb();
-            
+
             try {
                 const store = new SqliteConversationStore(defaultConfig, path);
                 await store.close();
-                
+
                 // Verify database was created by opening it again
                 const store2 = new SqliteConversationStore(defaultConfig, path);
                 await store2.close();
@@ -70,11 +70,11 @@ describe('SqliteConversationStore', () => {
         it('should create parent directory if it does not exist', async () => {
             const tempDir = mkdtempSync(join(tmpdir(), 'sqlite-test-'));
             const dbPath = join(tempDir, 'nested', 'dir', 'test.db');
-            
+
             try {
                 const store = new SqliteConversationStore(defaultConfig, dbPath);
                 await store.close();
-                
+
                 // Verify database was created
                 const store2 = new SqliteConversationStore(defaultConfig, dbPath);
                 await store2.close();
@@ -85,7 +85,7 @@ describe('SqliteConversationStore', () => {
 
         it('should throw error for invalid database path', async () => {
             const invalidPath = '/invalid/path/that/does/not/exist/and/cannot/be/created/test.db';
-            
+
             assert.throws(() => {
                 new SqliteConversationStore(defaultConfig, invalidPath);
             }, /Failed to open SQLite database/);
@@ -95,18 +95,18 @@ describe('SqliteConversationStore', () => {
     describe('CRUD Operations', () => {
         it('should store and retrieve a conversation', async () => {
             const { path, cleanup } = createTempDb();
-            
+
             try {
                 const store = new SqliteConversationStore(defaultConfig, path);
                 const conversation = createTestConversation('chat1', 'Test Chat');
-                
+
                 await store.set('chat1', conversation);
                 const retrieved = await store.get('chat1');
-                
+
                 assert.strictEqual(retrieved?.chatId, 'chat1');
                 assert.strictEqual(retrieved?.name, 'Test Chat');
                 assert.strictEqual(retrieved?.turns.length, 1);
-                
+
                 await store.close();
             } finally {
                 cleanup();
@@ -115,13 +115,13 @@ describe('SqliteConversationStore', () => {
 
         it('should return null for non-existent conversation', async () => {
             const { path, cleanup } = createTempDb();
-            
+
             try {
                 const store = new SqliteConversationStore(defaultConfig, path);
                 const retrieved = await store.get('nonexistent');
-                
+
                 assert.strictEqual(retrieved, null);
-                
+
                 await store.close();
             } finally {
                 cleanup();
@@ -130,26 +130,26 @@ describe('SqliteConversationStore', () => {
 
         it('should update existing conversation', async () => {
             const { path, cleanup } = createTempDb();
-            
+
             try {
                 const store = new SqliteConversationStore(defaultConfig, path);
                 const conversation = createTestConversation('chat1', 'Original Name');
-                
+
                 await store.set('chat1', conversation);
-                
+
                 // Update conversation
                 conversation.name = 'Updated Name';
                 conversation.turns.push({
                     userMessage: 'Second message',
                     timestamp: Date.now()
                 });
-                
+
                 await store.set('chat1', conversation);
                 const retrieved = await store.get('chat1');
-                
+
                 assert.strictEqual(retrieved?.name, 'Updated Name');
                 assert.strictEqual(retrieved?.turns.length, 2);
-                
+
                 await store.close();
             } finally {
                 cleanup();
@@ -158,17 +158,17 @@ describe('SqliteConversationStore', () => {
 
         it('should delete a conversation', async () => {
             const { path, cleanup } = createTempDb();
-            
+
             try {
                 const store = new SqliteConversationStore(defaultConfig, path);
                 const conversation = createTestConversation('chat1');
-                
+
                 await store.set('chat1', conversation);
                 await store.delete('chat1');
-                
+
                 const retrieved = await store.get('chat1');
                 assert.strictEqual(retrieved, null);
-                
+
                 await store.close();
             } finally {
                 cleanup();
@@ -177,21 +177,21 @@ describe('SqliteConversationStore', () => {
 
         it('should list all conversations', async () => {
             const { path, cleanup } = createTempDb();
-            
+
             try {
                 const store = new SqliteConversationStore(defaultConfig, path);
-                
+
                 await store.set('chat1', createTestConversation('chat1'));
                 await store.set('chat2', createTestConversation('chat2'));
                 await store.set('chat3', createTestConversation('chat3'));
-                
+
                 const list = await store.list();
-                
+
                 assert.strictEqual(list.length, 3);
                 assert.ok(list.includes('chat1'));
                 assert.ok(list.includes('chat2'));
                 assert.ok(list.includes('chat3'));
-                
+
                 await store.close();
             } finally {
                 cleanup();
@@ -200,18 +200,18 @@ describe('SqliteConversationStore', () => {
 
         it('should clear all conversations', async () => {
             const { path, cleanup } = createTempDb();
-            
+
             try {
                 const store = new SqliteConversationStore(defaultConfig, path);
-                
+
                 await store.set('chat1', createTestConversation('chat1'));
                 await store.set('chat2', createTestConversation('chat2'));
-                
+
                 await store.clear();
-                
+
                 const list = await store.list();
                 assert.strictEqual(list.length, 0);
-                
+
                 await store.close();
             } finally {
                 cleanup();
@@ -227,28 +227,28 @@ describe('SqliteConversationStore', () => {
                 maxTurnsPerConversation: 50,
                 conversationTTLMs: 3600000
             };
-            
+
             try {
                 const store = new SqliteConversationStore(config, path);
-                
+
                 // Add 3 conversations
                 await store.set('chat1', createTestConversation('chat1'));
                 await new Promise(resolve => setTimeout(resolve, 10));
                 await store.set('chat2', createTestConversation('chat2'));
                 await new Promise(resolve => setTimeout(resolve, 10));
                 await store.set('chat3', createTestConversation('chat3'));
-                
+
                 // Add 4th conversation - should evict chat1
                 await new Promise(resolve => setTimeout(resolve, 10));
                 await store.set('chat4', createTestConversation('chat4'));
-                
+
                 const list = await store.list();
                 assert.strictEqual(list.length, 3);
                 assert.ok(!list.includes('chat1'), 'chat1 should be evicted');
                 assert.ok(list.includes('chat2'));
                 assert.ok(list.includes('chat3'));
                 assert.ok(list.includes('chat4'));
-                
+
                 await store.close();
             } finally {
                 cleanup();
@@ -262,32 +262,32 @@ describe('SqliteConversationStore', () => {
                 maxTurnsPerConversation: 50,
                 conversationTTLMs: 3600000
             };
-            
+
             try {
                 const store = new SqliteConversationStore(config, path);
-                
+
                 // Add 3 conversations
                 await store.set('chat1', createTestConversation('chat1'));
                 await new Promise(resolve => setTimeout(resolve, 10));
                 await store.set('chat2', createTestConversation('chat2'));
                 await new Promise(resolve => setTimeout(resolve, 10));
                 await store.set('chat3', createTestConversation('chat3'));
-                
+
                 // Access chat1 to update its LRU position
                 await new Promise(resolve => setTimeout(resolve, 10));
                 await store.get('chat1');
-                
+
                 // Add 4th conversation - should evict chat2 (oldest accessed)
                 await new Promise(resolve => setTimeout(resolve, 10));
                 await store.set('chat4', createTestConversation('chat4'));
-                
+
                 const list = await store.list();
                 assert.strictEqual(list.length, 3);
                 assert.ok(list.includes('chat1'), 'chat1 should not be evicted');
                 assert.ok(!list.includes('chat2'), 'chat2 should be evicted');
                 assert.ok(list.includes('chat3'));
                 assert.ok(list.includes('chat4'));
-                
+
                 await store.close();
             } finally {
                 cleanup();
@@ -296,23 +296,23 @@ describe('SqliteConversationStore', () => {
 
         it('should return conversations in LRU order (most recent first)', async () => {
             const { path, cleanup } = createTempDb();
-            
+
             try {
                 const store = new SqliteConversationStore(defaultConfig, path);
-                
+
                 await store.set('chat1', createTestConversation('chat1'));
                 await new Promise(resolve => setTimeout(resolve, 10));
                 await store.set('chat2', createTestConversation('chat2'));
                 await new Promise(resolve => setTimeout(resolve, 10));
                 await store.set('chat3', createTestConversation('chat3'));
-                
+
                 const list = await store.list();
-                
+
                 // Most recently accessed should be first
                 assert.strictEqual(list[0], 'chat3');
                 assert.strictEqual(list[1], 'chat2');
                 assert.strictEqual(list[2], 'chat1');
-                
+
                 await store.close();
             } finally {
                 cleanup();
@@ -323,20 +323,20 @@ describe('SqliteConversationStore', () => {
     describe('Persistence', () => {
         it('should persist data across store instance recreations', async () => {
             const { path, cleanup } = createTempDb();
-            
+
             try {
                 // Create store and add data
                 const store1 = new SqliteConversationStore(defaultConfig, path);
                 await store1.set('chat1', createTestConversation('chat1', 'Persistent Chat'));
                 await store1.close();
-                
+
                 // Create new store instance with same database
                 const store2 = new SqliteConversationStore(defaultConfig, path);
                 const retrieved = await store2.get('chat1');
-                
+
                 assert.strictEqual(retrieved?.chatId, 'chat1');
                 assert.strictEqual(retrieved?.name, 'Persistent Chat');
-                
+
                 await store2.close();
             } finally {
                 cleanup();
@@ -345,26 +345,26 @@ describe('SqliteConversationStore', () => {
 
         it('should maintain data integrity after close and reopen', async () => {
             const { path, cleanup } = createTempDb();
-            
+
             try {
                 const store1 = new SqliteConversationStore(defaultConfig, path);
-                
+
                 // Add multiple conversations
                 await store1.set('chat1', createTestConversation('chat1'));
                 await store1.set('chat2', createTestConversation('chat2'));
                 await store1.set('chat3', createTestConversation('chat3'));
-                
+
                 await store1.close();
-                
+
                 // Reopen and verify all data
                 const store2 = new SqliteConversationStore(defaultConfig, path);
                 const list = await store2.list();
-                
+
                 assert.strictEqual(list.length, 3);
                 assert.ok(list.includes('chat1'));
                 assert.ok(list.includes('chat2'));
                 assert.ok(list.includes('chat3'));
-                
+
                 await store2.close();
             } finally {
                 cleanup();
@@ -375,11 +375,11 @@ describe('SqliteConversationStore', () => {
     describe('Concurrent Access', () => {
         it('should handle multiple simultaneous reads', async () => {
             const { path, cleanup } = createTempDb();
-            
+
             try {
                 const store = new SqliteConversationStore(defaultConfig, path);
                 await store.set('chat1', createTestConversation('chat1'));
-                
+
                 // Perform multiple concurrent reads
                 const reads = await Promise.all([
                     store.get('chat1'),
@@ -388,12 +388,12 @@ describe('SqliteConversationStore', () => {
                     store.get('chat1'),
                     store.get('chat1')
                 ]);
-                
+
                 // All reads should succeed
                 reads.forEach(result => {
                     assert.strictEqual(result?.chatId, 'chat1');
                 });
-                
+
                 await store.close();
             } finally {
                 cleanup();
@@ -402,10 +402,10 @@ describe('SqliteConversationStore', () => {
 
         it('should handle multiple simultaneous writes', async () => {
             const { path, cleanup } = createTempDb();
-            
+
             try {
                 const store = new SqliteConversationStore(defaultConfig, path);
-                
+
                 // Perform multiple concurrent writes
                 await Promise.all([
                     store.set('chat1', createTestConversation('chat1')),
@@ -414,11 +414,11 @@ describe('SqliteConversationStore', () => {
                     store.set('chat4', createTestConversation('chat4')),
                     store.set('chat5', createTestConversation('chat5'))
                 ]);
-                
+
                 // Verify all writes succeeded
                 const list = await store.list();
                 assert.strictEqual(list.length, 5);
-                
+
                 await store.close();
             } finally {
                 cleanup();
@@ -427,24 +427,24 @@ describe('SqliteConversationStore', () => {
 
         it('should handle mixed read and write operations', async () => {
             const { path, cleanup } = createTempDb();
-            
+
             try {
                 const store = new SqliteConversationStore(defaultConfig, path);
                 await store.set('chat1', createTestConversation('chat1'));
-                
+
                 // Mix of reads and writes
-                const operations = await Promise.all([
+                await Promise.all([
                     store.get('chat1'),
                     store.set('chat2', createTestConversation('chat2')),
                     store.get('chat1'),
                     store.set('chat3', createTestConversation('chat3')),
                     store.list()
                 ]);
-                
+
                 // Verify operations completed successfully
                 const list = await store.list();
                 assert.ok(list.length >= 3);
-                
+
                 await store.close();
             } finally {
                 cleanup();
@@ -455,23 +455,23 @@ describe('SqliteConversationStore', () => {
     describe('Error Handling', () => {
         it('should handle invalid JSON in database gracefully', async () => {
             const { path, cleanup } = createTempDb();
-            
+
             try {
                 const store = new SqliteConversationStore(defaultConfig, path);
-                
+
                 // Manually insert invalid JSON
                 const Database = (await import('better-sqlite3')).default;
                 const db = new Database(path);
                 db.prepare('INSERT INTO conversations (chat_id, name, turns, created_at, last_accessed_at) VALUES (?, ?, ?, ?, ?)')
                     .run('bad-chat', 'Bad Chat', 'invalid json', Date.now(), Date.now());
                 db.close();
-                
+
                 // Attempt to retrieve should throw error
                 await assert.rejects(
                     async () => await store.get('bad-chat'),
                     /Failed to retrieve conversation/
                 );
-                
+
                 await store.close();
             } finally {
                 cleanup();
@@ -480,13 +480,13 @@ describe('SqliteConversationStore', () => {
 
         it('should provide clear error messages for connection failures', async () => {
             const invalidPath = '/invalid/path/that/does/not/exist/and/cannot/be/created/test.db';
-            
             try {
                 new SqliteConversationStore(defaultConfig, invalidPath);
                 assert.fail('Should have thrown an error');
-            } catch (error: any) {
-                assert.ok(error.message.includes('Failed to open SQLite database'));
-                assert.ok(error.message.includes(invalidPath));
+            } catch (error: unknown) {
+                const err = error as Error;
+                assert.ok(err.message.includes('Failed to open SQLite database'));
+                assert.ok(err.message.includes(invalidPath));
             }
         });
     });
@@ -494,13 +494,13 @@ describe('SqliteConversationStore', () => {
     describe('Edge Cases', () => {
         it('should handle empty conversation list', async () => {
             const { path, cleanup } = createTempDb();
-            
+
             try {
                 const store = new SqliteConversationStore(defaultConfig, path);
                 const list = await store.list();
-                
+
                 assert.strictEqual(list.length, 0);
-                
+
                 await store.close();
             } finally {
                 cleanup();
@@ -509,11 +509,11 @@ describe('SqliteConversationStore', () => {
 
         it('should handle conversations with many turns', async () => {
             const { path, cleanup } = createTempDb();
-            
+
             try {
                 const store = new SqliteConversationStore(defaultConfig, path);
                 const conversation = createTestConversation('chat1');
-                
+
                 // Add many turns
                 for (let i = 0; i < 100; i++) {
                     conversation.turns.push({
@@ -521,12 +521,12 @@ describe('SqliteConversationStore', () => {
                         timestamp: Date.now() + i
                     });
                 }
-                
+
                 await store.set('chat1', conversation);
                 const retrieved = await store.get('chat1');
-                
+
                 assert.strictEqual(retrieved?.turns.length, 101); // 1 initial + 100 added
-                
+
                 await store.close();
             } finally {
                 cleanup();
@@ -535,19 +535,19 @@ describe('SqliteConversationStore', () => {
 
         it('should handle special characters in chatId and names', async () => {
             const { path, cleanup } = createTempDb();
-            
+
             try {
                 const store = new SqliteConversationStore(defaultConfig, path);
                 const specialChatId = 'chat-with-special-chars-!@#$%^&*()';
                 const specialName = 'Name with "quotes" and \'apostrophes\' and émojis 🚀';
-                
+
                 const conversation = createTestConversation(specialChatId, specialName);
                 await store.set(specialChatId, conversation);
-                
+
                 const retrieved = await store.get(specialChatId);
                 assert.strictEqual(retrieved?.chatId, specialChatId);
                 assert.strictEqual(retrieved?.name, specialName);
-                
+
                 await store.close();
             } finally {
                 cleanup();
@@ -556,7 +556,7 @@ describe('SqliteConversationStore', () => {
 
         it('should handle conversation with empty turns array', async () => {
             const { path, cleanup } = createTempDb();
-            
+
             try {
                 const store = new SqliteConversationStore(defaultConfig, path);
                 const conversation: Conversation = {
@@ -566,12 +566,12 @@ describe('SqliteConversationStore', () => {
                     createdAt: Date.now(),
                     lastAccessedAt: Date.now()
                 };
-                
+
                 await store.set('chat1', conversation);
                 const retrieved = await store.get('chat1');
-                
+
                 assert.strictEqual(retrieved?.turns.length, 0);
-                
+
                 await store.close();
             } finally {
                 cleanup();
@@ -580,212 +580,212 @@ describe('SqliteConversationStore', () => {
     });
 });
 
-    describe('Search Snippet Prioritization', () => {
-        it('should prioritize assistant response matches over user message matches', async () => {
-            const { path, cleanup } = createTempDb();
-            
-            try {
-                const store = new SqliteConversationStore(defaultConfig, path);
-                
-                const conversation: Conversation = {
-                    chatId: 'chat1',
-                    name: 'Test',
-                    turns: [
-                        {
-                            userMessage: 'What is the status of the database?',
-                            assistantResponse: 'The database is healthy and running normally.',
-                            timestamp: Date.now(),
-                        },
-                    ],
-                    createdAt: Date.now(),
-                    lastAccessedAt: Date.now(),
-                };
-                
-                await store.set('chat1', conversation);
-                
-                // Search for "database" which appears in both user message and assistant response
-                const results = await store.search({ query: 'database' });
-                
-                assert.strictEqual(results.length, 1);
-                assert.strictEqual(results[0].matchCount, 2);
-                assert.strictEqual(results[0].matchingTurns.length, 2);
-                
-                // First match should be from assistant response
-                assert.strictEqual(results[0].matchingTurns[0].matchType, 'assistant');
-                assert.ok(results[0].matchingTurns[0].snippet.includes('database'));
-                
-                // Second match should be from user message
-                assert.strictEqual(results[0].matchingTurns[1].matchType, 'user');
-                assert.ok(results[0].matchingTurns[1].snippet.includes('database'));
-                
-                await store.close();
-            } finally {
-                cleanup();
-            }
-        });
+describe('Search Snippet Prioritization', () => {
+    it('should prioritize assistant response matches over user message matches', async () => {
+        const { path, cleanup } = createTempDb();
 
-        it('should show only assistant matches when query only matches assistant', async () => {
-            const { path, cleanup } = createTempDb();
-            
-            try {
-                const store = new SqliteConversationStore(defaultConfig, path);
-                
-                const conversation: Conversation = {
-                    chatId: 'chat1',
-                    name: 'Test',
-                    turns: [
-                        {
-                            userMessage: 'What is the status?',
-                            assistantResponse: 'The service is healthy and operational.',
-                            timestamp: Date.now(),
-                        },
-                    ],
-                    createdAt: Date.now(),
-                    lastAccessedAt: Date.now(),
-                };
-                
-                await store.set('chat1', conversation);
-                
-                // Search for "healthy" which only appears in assistant response
-                const results = await store.search({ query: 'healthy' });
-                
-                assert.strictEqual(results.length, 1);
-                assert.strictEqual(results[0].matchCount, 1);
-                assert.strictEqual(results[0].matchingTurns.length, 1);
-                assert.strictEqual(results[0].matchingTurns[0].matchType, 'assistant');
-                
-                await store.close();
-            } finally {
-                cleanup();
-            }
-        });
+        try {
+            const store = new SqliteConversationStore(defaultConfig, path);
 
-        it('should show only user matches when query only matches user message', async () => {
-            const { path, cleanup } = createTempDb();
-            
-            try {
-                const store = new SqliteConversationStore(defaultConfig, path);
-                
-                const conversation: Conversation = {
-                    chatId: 'chat1',
-                    name: 'Test',
-                    turns: [
-                        {
-                            userMessage: 'What is the incident status?',
-                            assistantResponse: 'The issue has been resolved.',
-                            timestamp: Date.now(),
-                        },
-                    ],
-                    createdAt: Date.now(),
-                    lastAccessedAt: Date.now(),
-                };
-                
-                await store.set('chat1', conversation);
-                
-                // Search for "incident" which only appears in user message
-                const results = await store.search({ query: 'incident' });
-                
-                assert.strictEqual(results.length, 1);
-                assert.strictEqual(results[0].matchCount, 1);
-                assert.strictEqual(results[0].matchingTurns.length, 1);
-                assert.strictEqual(results[0].matchingTurns[0].matchType, 'user');
-                
-                await store.close();
-            } finally {
-                cleanup();
-            }
-        });
+            const conversation: Conversation = {
+                chatId: 'chat1',
+                name: 'Test',
+                turns: [
+                    {
+                        userMessage: 'What is the status of the database?',
+                        assistantResponse: 'The database is healthy and running normally.',
+                        timestamp: Date.now(),
+                    },
+                ],
+                createdAt: Date.now(),
+                lastAccessedAt: Date.now(),
+            };
 
-        it('should prioritize assistant matches across multiple turns', async () => {
-            const { path, cleanup } = createTempDb();
-            
-            try {
-                const store = new SqliteConversationStore(defaultConfig, path);
-                
-                const conversation: Conversation = {
-                    chatId: 'chat1',
-                    name: 'Test',
-                    turns: [
-                        {
-                            userMessage: 'Check the error logs',
-                            assistantResponse: 'I found an error in the logs.',
-                            timestamp: Date.now() - 2000,
-                        },
-                        {
-                            userMessage: 'What caused the error?',
-                            assistantResponse: 'The error was caused by a timeout.',
-                            timestamp: Date.now() - 1000,
-                        },
-                        {
-                            userMessage: 'Is the error fixed?',
-                            timestamp: Date.now(),
-                        },
-                    ],
-                    createdAt: Date.now(),
-                    lastAccessedAt: Date.now(),
-                };
-                
-                await store.set('chat1', conversation);
-                
-                // Search for "error" which appears in multiple places
-                const results = await store.search({ query: 'error' });
-                
-                assert.strictEqual(results.length, 1);
-                assert.strictEqual(results[0].matchCount, 5); // 2 assistant + 3 user
-                assert.strictEqual(results[0].matchingTurns.length, 5);
-                
-                // First two matches should be from assistant responses
-                assert.strictEqual(results[0].matchingTurns[0].matchType, 'assistant');
-                assert.strictEqual(results[0].matchingTurns[1].matchType, 'assistant');
-                
-                // Remaining matches should be from user messages
-                assert.strictEqual(results[0].matchingTurns[2].matchType, 'user');
-                assert.strictEqual(results[0].matchingTurns[3].matchType, 'user');
-                assert.strictEqual(results[0].matchingTurns[4].matchType, 'user');
-                
-                await store.close();
-            } finally {
-                cleanup();
-            }
-        });
+            await store.set('chat1', conversation);
 
-        it('should have correct snippet content for assistant matches', async () => {
-            const { path, cleanup } = createTempDb();
-            
-            try {
-                const store = new SqliteConversationStore(defaultConfig, path);
-                
-                const conversation: Conversation = {
-                    chatId: 'chat1',
-                    name: 'Test',
-                    turns: [
-                        {
-                            userMessage: 'What is happening?',
-                            assistantResponse: 'The system is experiencing high latency due to database connection issues.',
-                            timestamp: Date.now(),
-                        },
-                    ],
-                    createdAt: Date.now(),
-                    lastAccessedAt: Date.now(),
-                };
-                
-                await store.set('chat1', conversation);
-                
-                // Search for "latency"
-                const results = await store.search({ query: 'latency' });
-                
-                assert.strictEqual(results.length, 1);
-                assert.strictEqual(results[0].matchingTurns.length, 1);
-                
-                const snippet = results[0].matchingTurns[0].snippet;
-                assert.strictEqual(results[0].matchingTurns[0].matchType, 'assistant');
-                assert.ok(snippet.includes('latency'));
-                assert.ok(snippet.includes('system'));
-                assert.ok(snippet.includes('database'));
-                
-                await store.close();
-            } finally {
-                cleanup();
-            }
-        });
+            // Search for "database" which appears in both user message and assistant response
+            const results = await store.search({ query: 'database' });
+
+            assert.strictEqual(results.length, 1);
+            assert.strictEqual(results[0].matchCount, 2);
+            assert.strictEqual(results[0].matchingTurns.length, 2);
+
+            // First match should be from assistant response
+            assert.strictEqual(results[0].matchingTurns[0].matchType, 'assistant');
+            assert.ok(results[0].matchingTurns[0].snippet.includes('database'));
+
+            // Second match should be from user message
+            assert.strictEqual(results[0].matchingTurns[1].matchType, 'user');
+            assert.ok(results[0].matchingTurns[1].snippet.includes('database'));
+
+            await store.close();
+        } finally {
+            cleanup();
+        }
     });
+
+    it('should show only assistant matches when query only matches assistant', async () => {
+        const { path, cleanup } = createTempDb();
+
+        try {
+            const store = new SqliteConversationStore(defaultConfig, path);
+
+            const conversation: Conversation = {
+                chatId: 'chat1',
+                name: 'Test',
+                turns: [
+                    {
+                        userMessage: 'What is the status?',
+                        assistantResponse: 'The service is healthy and operational.',
+                        timestamp: Date.now(),
+                    },
+                ],
+                createdAt: Date.now(),
+                lastAccessedAt: Date.now(),
+            };
+
+            await store.set('chat1', conversation);
+
+            // Search for "healthy" which only appears in assistant response
+            const results = await store.search({ query: 'healthy' });
+
+            assert.strictEqual(results.length, 1);
+            assert.strictEqual(results[0].matchCount, 1);
+            assert.strictEqual(results[0].matchingTurns.length, 1);
+            assert.strictEqual(results[0].matchingTurns[0].matchType, 'assistant');
+
+            await store.close();
+        } finally {
+            cleanup();
+        }
+    });
+
+    it('should show only user matches when query only matches user message', async () => {
+        const { path, cleanup } = createTempDb();
+
+        try {
+            const store = new SqliteConversationStore(defaultConfig, path);
+
+            const conversation: Conversation = {
+                chatId: 'chat1',
+                name: 'Test',
+                turns: [
+                    {
+                        userMessage: 'What is the incident status?',
+                        assistantResponse: 'The issue has been resolved.',
+                        timestamp: Date.now(),
+                    },
+                ],
+                createdAt: Date.now(),
+                lastAccessedAt: Date.now(),
+            };
+
+            await store.set('chat1', conversation);
+
+            // Search for "incident" which only appears in user message
+            const results = await store.search({ query: 'incident' });
+
+            assert.strictEqual(results.length, 1);
+            assert.strictEqual(results[0].matchCount, 1);
+            assert.strictEqual(results[0].matchingTurns.length, 1);
+            assert.strictEqual(results[0].matchingTurns[0].matchType, 'user');
+
+            await store.close();
+        } finally {
+            cleanup();
+        }
+    });
+
+    it('should prioritize assistant matches across multiple turns', async () => {
+        const { path, cleanup } = createTempDb();
+
+        try {
+            const store = new SqliteConversationStore(defaultConfig, path);
+
+            const conversation: Conversation = {
+                chatId: 'chat1',
+                name: 'Test',
+                turns: [
+                    {
+                        userMessage: 'Check the error logs',
+                        assistantResponse: 'I found an error in the logs.',
+                        timestamp: Date.now() - 2000,
+                    },
+                    {
+                        userMessage: 'What caused the error?',
+                        assistantResponse: 'The error was caused by a timeout.',
+                        timestamp: Date.now() - 1000,
+                    },
+                    {
+                        userMessage: 'Is the error fixed?',
+                        timestamp: Date.now(),
+                    },
+                ],
+                createdAt: Date.now(),
+                lastAccessedAt: Date.now(),
+            };
+
+            await store.set('chat1', conversation);
+
+            // Search for "error" which appears in multiple places
+            const results = await store.search({ query: 'error' });
+
+            assert.strictEqual(results.length, 1);
+            assert.strictEqual(results[0].matchCount, 5); // 2 assistant + 3 user
+            assert.strictEqual(results[0].matchingTurns.length, 5);
+
+            // First two matches should be from assistant responses
+            assert.strictEqual(results[0].matchingTurns[0].matchType, 'assistant');
+            assert.strictEqual(results[0].matchingTurns[1].matchType, 'assistant');
+
+            // Remaining matches should be from user messages
+            assert.strictEqual(results[0].matchingTurns[2].matchType, 'user');
+            assert.strictEqual(results[0].matchingTurns[3].matchType, 'user');
+            assert.strictEqual(results[0].matchingTurns[4].matchType, 'user');
+
+            await store.close();
+        } finally {
+            cleanup();
+        }
+    });
+
+    it('should have correct snippet content for assistant matches', async () => {
+        const { path, cleanup } = createTempDb();
+
+        try {
+            const store = new SqliteConversationStore(defaultConfig, path);
+
+            const conversation: Conversation = {
+                chatId: 'chat1',
+                name: 'Test',
+                turns: [
+                    {
+                        userMessage: 'What is happening?',
+                        assistantResponse: 'The system is experiencing high latency due to database connection issues.',
+                        timestamp: Date.now(),
+                    },
+                ],
+                createdAt: Date.now(),
+                lastAccessedAt: Date.now(),
+            };
+
+            await store.set('chat1', conversation);
+
+            // Search for "latency"
+            const results = await store.search({ query: 'latency' });
+
+            assert.strictEqual(results.length, 1);
+            assert.strictEqual(results[0].matchingTurns.length, 1);
+
+            const snippet = results[0].matchingTurns[0].snippet;
+            assert.strictEqual(results[0].matchingTurns[0].matchType, 'assistant');
+            assert.ok(snippet.includes('latency'));
+            assert.ok(snippet.includes('system'));
+            assert.ok(snippet.includes('database'));
+
+            await store.close();
+        } finally {
+            cleanup();
+        }
+    });
+});

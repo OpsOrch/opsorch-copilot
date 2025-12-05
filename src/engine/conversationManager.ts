@@ -1,30 +1,32 @@
 /**
  * Conversation state management for tracking chat history across requests.
- * 
+ *
  * Stores message history per chatId to maintain context between API calls.
  */
 
 import {
-    Conversation,
-    ConversationConfig,
-    LlmMessage,
-    ToolResult,
-} from '../types.js';
-import { ConversationStore } from '../conversationStore.js';
-import { createConversationStore } from '../storeFactory.js';
-import { Entity, ConversationContext } from './entityExtractor.js';
+  Conversation,
+  ConversationConfig,
+  LlmMessage,
+  ToolResult,
+  Entity,
+  ConversationContext,
+} from "../types.js";
+import { ConversationStore } from "../conversationStore.js";
+import { createConversationStore } from "../storeFactory.js";
+
 
 export const DEFAULT_CONVERSATION_CONFIG: ConversationConfig = {
-    maxConversations: 100,
-    maxTurnsPerConversation: 20,
-    conversationTTLMs: 30 * 24 * 60 * 60 * 1000, // 30 days
+  maxConversations: 100,
+  maxTurnsPerConversation: 20,
+  conversationTTLMs: 30 * 24 * 60 * 60 * 1000, // 30 days
 };
 
 const MAX_ENTITIES_PER_TYPE = 100; // LRU limit per entity type
 
 /**
  * ConversationManager maintains chat history across multiple API requests.
- * 
+ *
  * Features:
  * - Stores conversation history per chatId using pluggable storage backend
  * - Automatically evicts old/inactive conversations
@@ -32,273 +34,277 @@ const MAX_ENTITIES_PER_TYPE = 100; // LRU limit per entity type
  * - Thread-safe for concurrent requests
  */
 export class ConversationManager {
-    private readonly store: ConversationStore;
+  private readonly store: ConversationStore;
 
-    constructor(
-        private readonly config: ConversationConfig = DEFAULT_CONVERSATION_CONFIG,
-        store?: ConversationStore
-    ) {
-        // Use factory to create store based on environment config if none provided
-        this.store = store ?? createConversationStore(config);
+  constructor(
+    private readonly config: ConversationConfig = DEFAULT_CONVERSATION_CONFIG,
+    store?: ConversationStore,
+  ) {
+    // Use factory to create store based on environment config if none provided
+    this.store = store ?? createConversationStore(config);
+  }
+
+  /**
+   * Get conversation history for a chatId.
+   * Returns null if conversation doesn't exist or has expired.
+   * Updates the lastAccessedAt timestamp.
+   */
+  async getConversation(chatId: string): Promise<Conversation | null> {
+    const conversation = await this.store.get(chatId);
+
+    if (!conversation) {
+      return null;
     }
 
-    /**
-     * Get conversation history for a chatId.
-     * Returns null if conversation doesn't exist or has expired.
-     * Updates the lastAccessedAt timestamp.
-     */
-    async getConversation(chatId: string): Promise<Conversation | null> {
-        const conversation = await this.store.get(chatId);
-
-        if (!conversation) {
-            return null;
-        }
-
-        // Check if expired
-        const age = Date.now() - conversation.lastAccessedAt;
-        if (age > this.config.conversationTTLMs) {
-            await this.deleteConversation(chatId);
-            return null;
-        }
-
-        // Update access time
-        conversation.lastAccessedAt = Date.now();
-        await this.store.set(chatId, conversation);
-
-        return conversation;
+    // Check if expired
+    const age = Date.now() - conversation.lastAccessedAt;
+    if (age > this.config.conversationTTLMs) {
+      await this.deleteConversation(chatId);
+      return null;
     }
 
-    /**
-     * Get conversation without updating lastAccessedAt.
-     * Useful for read-only operations like displaying conversation metadata.
-     */
-    async peekConversation(chatId: string): Promise<Conversation | null> {
-        const conversation = await this.store.get(chatId);
+    // Update access time
+    conversation.lastAccessedAt = Date.now();
+    await this.store.set(chatId, conversation);
 
-        if (!conversation) {
-            return null;
-        }
+    return conversation;
+  }
 
-        // Check if expired
-        const age = Date.now() - conversation.lastAccessedAt;
-        if (age > this.config.conversationTTLMs) {
-            return null; // Don't delete, just return null
-        }
+  /**
+   * Get conversation without updating lastAccessedAt.
+   * Useful for read-only operations like displaying conversation metadata.
+   */
+  async peekConversation(chatId: string): Promise<Conversation | null> {
+    const conversation = await this.store.get(chatId);
 
-        return conversation;
+    if (!conversation) {
+      return null;
     }
 
-    /**
-     * Start a new conversation or append to existing one.
-     */
-    async addTurn(
-        chatId: string,
-        userMessage: string,
-        toolResults?: ToolResult[],
-        assistantResponse?: string,
-        entities?: Entity[]
-    ): Promise<void> {
-        let conversation = await this.store.get(chatId);
+    // Check if expired
+    const age = Date.now() - conversation.lastAccessedAt;
+    if (age > this.config.conversationTTLMs) {
+      return null; // Don't delete, just return null
+    }
 
-        if (!conversation) {
-            // Create new conversation with temporary name (will be updated by ChatNamer)
-            conversation = {
-                chatId,
-                name: 'New Conversation',
-                turns: [],
-                createdAt: Date.now(),
-                lastAccessedAt: Date.now(),
-            };
+    return conversation;
+  }
+
+  /**
+   * Start a new conversation or append to existing one.
+   */
+  async addTurn(
+    chatId: string,
+    userMessage: string,
+    toolResults?: ToolResult[],
+    assistantResponse?: string,
+    entities?: Entity[],
+  ): Promise<void> {
+    let conversation = await this.store.get(chatId);
+
+    if (!conversation) {
+      // Create new conversation with temporary name (will be updated by ChatNamer)
+      conversation = {
+        chatId,
+        name: "New Conversation",
+        turns: [],
+        createdAt: Date.now(),
+        lastAccessedAt: Date.now(),
+      };
+    }
+
+    // Add new turn
+    conversation.turns.push({
+      userMessage,
+      toolResults,
+      assistantResponse,
+      timestamp: Date.now(),
+      entities,
+    });
+
+    // Limit conversation length (keep most recent turns)
+    if (conversation.turns.length > this.config.maxTurnsPerConversation) {
+      conversation.turns = conversation.turns.slice(
+        -this.config.maxTurnsPerConversation,
+      );
+    }
+
+    conversation.lastAccessedAt = Date.now();
+    await this.store.set(chatId, conversation);
+  }
+
+  /**
+   * Build LLM message history from conversation turns.
+   */
+  async buildMessageHistory(chatId: string): Promise<LlmMessage[]> {
+    const conversation = await this.getConversation(chatId);
+    if (!conversation) {
+      return [];
+    }
+
+    const messages: LlmMessage[] = [];
+
+    for (const turn of conversation.turns) {
+      // Add user message
+      messages.push({
+        role: "user",
+        content: turn.userMessage,
+      });
+
+      // Add tool results if any
+      if (turn.toolResults && turn.toolResults.length > 0) {
+        for (const result of turn.toolResults) {
+          const resultText =
+            typeof result.result === "string"
+              ? result.result
+              : JSON.stringify(result.result);
+
+          messages.push({
+            role: "tool",
+            toolName: result.name,
+            content: resultText,
+          });
         }
+      }
 
-        // Add new turn
-        conversation.turns.push({
-            userMessage,
-            toolResults,
-            assistantResponse,
-            timestamp: Date.now(),
-            entities,
+      // Add assistant response if any
+      if (turn.assistantResponse) {
+        messages.push({
+          role: "assistant",
+          content: turn.assistantResponse,
         });
-
-        // Limit conversation length (keep most recent turns)
-        if (conversation.turns.length > this.config.maxTurnsPerConversation) {
-            conversation.turns = conversation.turns.slice(-this.config.maxTurnsPerConversation);
-        }
-
-        conversation.lastAccessedAt = Date.now();
-        await this.store.set(chatId, conversation);
+      }
     }
 
-    /**
-     * Build LLM message history from conversation turns.
-     */
-    async buildMessageHistory(chatId: string): Promise<LlmMessage[]> {
-        const conversation = await this.getConversation(chatId);
-        if (!conversation) {
-            return [];
+    return messages;
+  }
+
+  /**
+   * Delete a conversation.
+   */
+  async deleteConversation(chatId: string): Promise<void> {
+    await this.store.delete(chatId);
+  }
+
+  /**
+   * List all conversation IDs.
+   */
+  async list(): Promise<string[]> {
+    return await this.store.list();
+  }
+
+  /**
+   * Clear expired conversations.
+   */
+  async clearExpired(): Promise<void> {
+    const now = Date.now();
+    const toDelete: string[] = [];
+
+    const chatIds = await this.store.list();
+    for (const chatId of chatIds) {
+      const conversation = await this.store.get(chatId);
+      if (conversation) {
+        const age = now - conversation.lastAccessedAt;
+        if (age > this.config.conversationTTLMs) {
+          toDelete.push(chatId);
         }
-
-        const messages: LlmMessage[] = [];
-
-        for (const turn of conversation.turns) {
-            // Add user message
-            messages.push({
-                role: 'user',
-                content: turn.userMessage,
-            });
-
-            // Add tool results if any
-            if (turn.toolResults && turn.toolResults.length > 0) {
-                for (const result of turn.toolResults) {
-                    const resultText = typeof result.result === 'string'
-                        ? result.result
-                        : JSON.stringify(result.result);
-
-                    messages.push({
-                        role: 'tool',
-                        toolName: result.name,
-                        content: resultText,
-                    });
-                }
-            }
-
-            // Add assistant response if any
-            if (turn.assistantResponse) {
-                messages.push({
-                    role: 'assistant',
-                    content: turn.assistantResponse,
-                });
-            }
-        }
-
-        return messages;
+      }
     }
 
-    /**
-     * Delete a conversation.
-     */
-    async deleteConversation(chatId: string): Promise<void> {
-        await this.store.delete(chatId);
+    for (const chatId of toDelete) {
+      await this.deleteConversation(chatId);
+    }
+  }
+
+  /**
+   * Get statistics about conversation storage.
+   */
+  async stats(): Promise<{ activeConversations: number; totalTurns: number }> {
+    let totalTurns = 0;
+    const chatIds = await this.store.list();
+
+    for (const chatId of chatIds) {
+      const conversation = await this.store.get(chatId);
+      if (conversation) {
+        totalTurns += conversation.turns.length;
+      }
     }
 
-    /**
-     * List all conversation IDs.
-     */
-    async list(): Promise<string[]> {
-        return await this.store.list();
+    return {
+      activeConversations: chatIds.length,
+      totalTurns,
+    };
+  }
+
+  /**
+   * Set the name for a conversation.
+   */
+  async setConversationName(chatId: string, name: string): Promise<void> {
+    const conversation = await this.store.get(chatId);
+
+    if (!conversation) {
+      console.warn(
+        `[ConversationManager] Cannot set name for non-existent conversation: ${chatId}`,
+      );
+      return;
     }
 
+    conversation.name = name;
+    conversation.lastAccessedAt = Date.now();
+    await this.store.set(chatId, conversation);
+  }
 
-    /**
-     * Clear expired conversations.
-     */
-    async clearExpired(): Promise<void> {
-        const now = Date.now();
-        const toDelete: string[] = [];
+  /**
+   * Clear all conversations (useful for testing).
+   */
+  async clear(): Promise<void> {
+    await this.store.clear();
+  }
 
-        const chatIds = await this.store.list();
-        for (const chatId of chatIds) {
-            const conversation = await this.store.get(chatId);
-            if (conversation) {
-                const age = now - conversation.lastAccessedAt;
-                if (age > this.config.conversationTTLMs) {
-                    toDelete.push(chatId);
-                }
-            }
-        }
+  /**
+   * Get entities from conversation history.
+   * Returns a ConversationContext with entities organized by type.
+   */
+  async getEntities(chatId: string): Promise<ConversationContext> {
+    const conversation = await this.getConversation(chatId);
+    const entityMap = new Map<string, Entity[]>();
 
-        for (const chatId of toDelete) {
-            await this.deleteConversation(chatId);
-        }
+    if (!conversation) {
+      return { chatId, entities: entityMap };
     }
 
-    /**
-     * Get statistics about conversation storage.
-     */
-    async stats(): Promise<{ activeConversations: number; totalTurns: number }> {
-        let totalTurns = 0;
-        const chatIds = await this.store.list();
-
-        for (const chatId of chatIds) {
-            const conversation = await this.store.get(chatId);
-            if (conversation) {
-                totalTurns += conversation.turns.length;
-            }
-        }
-
-        return {
-            activeConversations: chatIds.length,
-            totalTurns,
-        };
+    // Collect all entities from all turns
+    const allEntities: Entity[] = [];
+    for (const turn of conversation.turns) {
+      if (turn.entities) {
+        allEntities.push(...turn.entities);
+      }
     }
 
-    /**
-     * Set the name for a conversation.
-     */
-    async setConversationName(chatId: string, name: string): Promise<void> {
-        const conversation = await this.store.get(chatId);
-
-        if (!conversation) {
-            console.warn(`[ConversationManager] Cannot set name for non-existent conversation: ${chatId}`);
-            return;
-        }
-
-        conversation.name = name;
-        conversation.lastAccessedAt = Date.now();
-        await this.store.set(chatId, conversation);
+    // Group by type and apply LRU limit
+    for (const entity of allEntities) {
+      const typeEntities = entityMap.get(entity.type) || [];
+      typeEntities.push(entity);
+      entityMap.set(entity.type, typeEntities);
     }
 
-    /**
-     * Clear all conversations (useful for testing).
-     */
-    async clear(): Promise<void> {
-        await this.store.clear();
+    // Apply LRU eviction per type (keep most recent)
+    for (const [type, entities] of entityMap.entries()) {
+      if (entities.length > MAX_ENTITIES_PER_TYPE) {
+        // Sort by extractedAt descending and keep most recent
+        entities.sort((a, b) => b.extractedAt - a.extractedAt);
+        entityMap.set(type, entities.slice(0, MAX_ENTITIES_PER_TYPE));
+      }
     }
 
-    /**
-     * Get entities from conversation history.
-     * Returns a ConversationContext with entities organized by type.
-     */
-    async getEntities(chatId: string): Promise<ConversationContext> {
-        const conversation = await this.getConversation(chatId);
-        const entityMap = new Map<string, Entity[]>();
+    return { chatId, entities: entityMap };
+  }
 
-        if (!conversation) {
-            return { chatId, entities: entityMap };
-        }
-
-        // Collect all entities from all turns
-        const allEntities: Entity[] = [];
-        for (const turn of conversation.turns) {
-            if (turn.entities) {
-                allEntities.push(...turn.entities);
-            }
-        }
-
-        // Group by type and apply LRU limit
-        for (const entity of allEntities) {
-            const typeEntities = entityMap.get(entity.type) || [];
-            typeEntities.push(entity);
-            entityMap.set(entity.type, typeEntities);
-        }
-
-        // Apply LRU eviction per type (keep most recent)
-        for (const [type, entities] of entityMap.entries()) {
-            if (entities.length > MAX_ENTITIES_PER_TYPE) {
-                // Sort by extractedAt descending and keep most recent
-                entities.sort((a, b) => b.extractedAt - a.extractedAt);
-                entityMap.set(type, entities.slice(0, MAX_ENTITIES_PER_TYPE));
-            }
-        }
-
-        return { chatId, entities: entityMap };
-    }
-
-    /**
-     * Get the underlying conversation store.
-     * Useful for advanced operations like search.
-     */
-    getStore(): ConversationStore {
-        return this.store;
-    }
+  /**
+   * Get the underlying conversation store.
+   * Useful for advanced operations like search.
+   */
+  getStore(): ConversationStore {
+    return this.store;
+  }
 }

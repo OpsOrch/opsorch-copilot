@@ -1,7 +1,6 @@
 import { test, before } from 'node:test';
 import assert from 'node:assert';
 import { createApp, buildPreview } from '../src/server.js';
-import { type IncomingMessage, type ServerResponse } from 'node:http';
 import type { Express } from 'express';
 import { LlmClient, Tool, ToolCall, Conversation } from '../src/types.js';
 import { makeEngine, StubMcp } from './helpers/copilotTestUtils.js';
@@ -16,7 +15,7 @@ before(() => {
  */
 function createTestApp() {
     const llm: LlmClient = {
-        async chat(messages, tools) {
+        async chat(_messages, _tools) {
             return {
                 content: JSON.stringify({ conclusion: 'Test response', evidence: [] }),
                 toolCalls: [],
@@ -47,7 +46,8 @@ async function request(
     app: Express,
     method: string,
     path: string,
-    body?: any
+    body?: Record<string, unknown>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): Promise<{ status: number; body: any }> {
     return new Promise((resolve) => {
         // Create mock request and response objects
@@ -59,7 +59,7 @@ async function request(
             },
             body: body || {},
             params: {},
-        } as any;
+        } as unknown as Express.Request;
 
         const res = {
             statusCode: 200,
@@ -69,7 +69,7 @@ async function request(
                 this.statusCode = code;
                 return this;
             },
-            json(data: any) {
+            json(data: Record<string, unknown>) {
                 this._body = JSON.stringify(data);
                 resolve({
                     status: this.statusCode,
@@ -81,10 +81,11 @@ async function request(
                 this._headers[name] = value;
                 return this;
             },
-        } as any;
+        };
 
         // Handle the request through the app
-        app(req, res);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        app(req as any, res as any);
     });
 }
 
@@ -297,7 +298,7 @@ test('buildPreview - skips empty assistant responses', () => {
 
 test('buildPreview - truncates long assistant responses to 150 chars', () => {
     const longResponse = 'This is a very long assistant response that exceeds the 150 character limit and should be truncated with an ellipsis at the end to indicate there is more content available.';
-    
+
     const conversation: Conversation = {
         chatId: 'test-6',
         name: 'Test Chat',
@@ -320,7 +321,7 @@ test('buildPreview - truncates long assistant responses to 150 chars', () => {
 
 test('buildPreview - does not add ellipsis for responses exactly 150 chars', () => {
     const exactResponse = 'A'.repeat(150);
-    
+
     const conversation: Conversation = {
         chatId: 'test-7',
         name: 'Test Chat',
@@ -419,7 +420,7 @@ test('buildPreview - handles malformed conversation gracefully', () => {
     const malformedConversation1 = {
         chatId: 'test-malformed-1',
         name: 'Test',
-        turns: null as any,
+        turns: null as unknown as Conversation['turns'],
         createdAt: Date.now(),
         lastAccessedAt: Date.now(),
     };
@@ -431,7 +432,7 @@ test('buildPreview - handles malformed conversation gracefully', () => {
     const malformedConversation2 = {
         chatId: 'test-malformed-2',
         name: 'Test',
-        turns: undefined as any,
+        turns: undefined as unknown as Conversation['turns'],
         createdAt: Date.now(),
         lastAccessedAt: Date.now(),
     };
@@ -446,8 +447,8 @@ test('buildPreview - handles conversation with null turn properties', () => {
         name: 'Test',
         turns: [
             {
-                userMessage: null as any,
-                assistantResponse: null as any,
+                userMessage: null as unknown as string,
+                assistantResponse: null as unknown as string,
                 timestamp: Date.now(),
             },
         ],
@@ -465,8 +466,8 @@ test('buildPreview - handles conversation with undefined turn properties', () =>
         name: 'Test',
         turns: [
             {
-                userMessage: undefined as any,
-                assistantResponse: undefined as any,
+                userMessage: undefined as unknown as string,
+                assistantResponse: undefined as unknown as string,
                 timestamp: Date.now(),
             },
         ],

@@ -1,4 +1,10 @@
-export type JsonValue = string | number | boolean | null | JsonObject | JsonValue[];
+export type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | JsonObject
+  | JsonValue[];
 export type JsonObject = { [key: string]: JsonValue };
 
 export type Tool = {
@@ -27,29 +33,29 @@ export type ToolOutputSubmission = {
 };
 
 // Re-export LLM types for backward compatibility
-export type { LlmMessage, LlmResponse, LlmClient } from './llmClient.js';
+export type { LlmMessage, LlmResponse, LlmClient } from "./llmClient.js";
 // Re-export RuntimeConfig
-export type { RuntimeConfig } from './runtimeConfig.js';
+export type { RuntimeConfig } from "./runtimeConfig.js";
 
 export type CopilotAnswer = {
-  conclusion: string;              // human-friendly final answer
-  evidence?: string[];             // facts, logs, metrics, incidents
-  missing?: string[];              // what info is needed next
-  references?: CopilotReferences;  // ids/time ranges the console can deep link to
-  data?: ToolResult[];             // raw results from tool calls
-  confidence?: number;             // 0–1 probability
-  chatId: string;                 // session continuity
-  correlations?: Correlation[];    // detected correlations between events
-  anomalies?: Anomaly[];           // detected metric anomalies
+  conclusion: string; // human-friendly final answer
+  evidence?: string[]; // facts, logs, metrics, incidents
+  missing?: string[]; // what info is needed next
+  references?: CopilotReferences; // ids/time ranges the console can deep link to
+  data?: ToolResult[]; // raw results from tool calls
+  confidence?: number; // 0–1 probability
+  chatId: string; // session continuity
+  correlations?: Correlation[]; // detected correlations between events
+  anomalies?: Anomaly[]; // detected metric anomalies
 };
 
 export type CopilotReferences = {
-  incidents?: string[];            // incident IDs
-  services?: string[];             // service slugs/names
-  metrics?: MetricReference[];     // metric expressions + windows
-  logs?: LogReference[];           // log scopes + windows
-  tickets?: string[];              // ticket IDs
-  alerts?: string[];               // alert IDs
+  incidents?: string[]; // incident IDs
+  services?: string[]; // service slugs/names
+  metrics?: MetricReference[]; // metric expressions + windows
+  logs?: LogReference[]; // log scopes + windows
+  tickets?: string[]; // ticket IDs
+  alerts?: string[]; // alert IDs
 };
 
 export type MetricReference = {
@@ -115,10 +121,11 @@ export type ConversationConfig = {
 
 // EntityExtractor types
 export interface Entity {
-  type: 'incident' | 'service' | 'timestamp' | 'ticket';
+  type: "incident" | "service" | "timestamp" | "ticket" | "alert" | "metric";
   value: string;
   extractedAt: number;
   source: string;
+  prominence?: number; // Optional prominence score for entity ranking
 }
 
 export interface ConversationContext {
@@ -129,10 +136,10 @@ export interface ConversationContext {
 // CorrelationDetector types
 export interface CorrelationEvent {
   timestamp: string;
-  source: 'metric' | 'log' | 'incident';
+  source: "metric" | "log" | "incident";
   type: string;
   value?: number;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, JsonValue>;
 }
 
 export interface Correlation {
@@ -144,7 +151,7 @@ export interface Correlation {
 
 // TimelineSummarizer types
 export interface TimelineActor {
-  type: 'user' | 'bot' | 'system';
+  type: "user" | "bot" | "system";
   name?: string;
   id?: string;
 }
@@ -179,24 +186,24 @@ export interface QueryScope {
 export interface ScopeInference {
   scope: QueryScope;
   confidence: number;
-  source: 'incident' | 'question' | 'previous_query' | 'default';
+  source: "incident" | "question" | "previous_query" | "default";
   reason: string;
 }
 
 // IntentClassifier types
 export type UserIntent =
-  | 'observability'      // User wants logs/metrics/telemetry
-  | 'investigation'      // User wants incidents/timeline/root cause
-  | 'status_check'       // User wants current state/health
-  | 'action'             // User wants to create/update something
-  | 'navigation'         // User is continuing/following up
-  | 'unknown';           // Cannot determine intent
+  | "observability" // User wants logs/metrics/telemetry
+  | "investigation" // User wants incidents/timeline/root cause
+  | "status_check" // User wants current state/health
+  | "action" // User wants to create/update something
+  | "navigation" // User is continuing/following up
+  | "unknown"; // Cannot determine intent
 
 export interface IntentResult {
   intent: UserIntent;
-  confidence: number;      // 0.0 (no confidence) to 1.0 (very confident)
+  confidence: number; // 0.0 (no confidence) to 1.0 (very confident)
   suggestedTools: string[];
-  reasoning: string;       // For debugging and observability
+  reasoning: string; // For debugging and observability
 }
 
 export interface IntentContext {
@@ -205,7 +212,7 @@ export interface IntentContext {
 
   // From tool execution history
   lastToolsUsed: string[];
-  lastToolArgs: Record<string, any>[];
+  lastToolArgs: Record<string, JsonValue>[];
 
   // Metadata
   turnNumber: number;
@@ -226,14 +233,14 @@ export interface MetricSeries {
 export interface Anomaly {
   timestamp: string;
   value: number;
-  type: 'spike' | 'drop' | 'outlier';
-  severity: 'low' | 'medium' | 'high';
+  type: "spike" | "drop" | "outlier";
+  severity: "low" | "medium" | "high";
   deviationFromMean: number;
   metric: string;
 }
 
 export interface Trend {
-  direction: 'increasing' | 'decreasing' | 'stable';
+  direction: "increasing" | "decreasing" | "stable";
   confidence: number;
   startTimestamp: string;
   endTimestamp: string;
@@ -242,8 +249,8 @@ export interface Trend {
 
 // Search types
 export interface SearchOptions {
-  query: string;                    // Text to search for
-  limit?: number;                   // Max results (default: 50)
+  query: string; // Text to search for
+  limit?: number; // Max results (default: 50)
 }
 
 export interface SearchResult {
@@ -251,237 +258,175 @@ export interface SearchResult {
   name: string;
   createdAt: number;
   lastAccessedAt: number;
-  matchCount: number;               // Number of matching turns
-  matchingTurns: MatchingTurn[];    // Details of matches
+  matchCount: number; // Number of matching turns
+  matchingTurns: MatchingTurn[]; // Details of matches
 }
 
 export interface MatchingTurn {
-  turnIndex: number;                // Index in conversation.turns array
-  snippet: string;                  // Truncated preview (max 200 chars)
+  turnIndex: number; // Index in conversation.turns array
+  snippet: string; // Truncated preview (max 200 chars)
   timestamp: number;
-  matchType: 'user' | 'assistant' | 'entity';
-}
-
-// ============================================================
-// DOMAIN CONFIGURATION TYPES
-// ============================================================
-
-/**
- * Tool matcher configuration for domain-tool association
- */
-export interface ToolMatcher {
-  match: string;                   // Exact/glob/regex pattern
-  type: 'exact' | 'glob' | 'regex';
-  priority?: number;               // Higher priority is evaluated first (default: 0)
-  allowMultiple?: boolean;         // Opt-in when several domains share a tool
-}
-
-/**
- * Entity extraction configuration
- */
-export interface EntityConfig {
-  type: string;                    // Entity type (e.g., 'incident', 'service')
-  collectionKey?: string;          // Override pluralized key (default pluralize(type))
-  idPattern?: string;              // Regex for ID validation
-  idPaths: string[];               // JSON paths to ID fields
-  namePaths?: string[];            // JSON paths to name fields
-  arrayPaths?: string[];           // JSON paths to entity arrays
-  timestampPaths?: string[];       // Paths to timestamps
-  contextPaths?: string[];         // Paths for additional context
-}
-
-/**
- * Reference resolution configuration
- */
-export interface ReferenceConfig {
-  pattern: string;                 // Regex pattern (e.g., "(that|this) incident")
-  entityType: string;              // Entity type to resolve to
-  priority?: number;               // Higher = higher priority (default: 0)
-}
-
-/**
- * Reference extraction from tool results configuration
- */
-export interface ReferenceResultConfig {
-  idPaths: string[];               // JSON paths yielding IDs
-  arrayPaths?: string[];           // JSON paths yielding collections
-}
-
-/**
- * Structured reference configuration for bucket-based references
- */
-export interface StructuredReferenceConfig {
-  bucket: string;                  // Copilot reference bucket name (e.g., 'metrics')
-  schema: string;                  // Logical schema name for validation/typing
-  requiredFields: Array<{ name: string; path: string }>;
-  optionalFields?: Array<{ name: string; path: string }>;
-  transform?: string;              // Optional named transform applied after extraction
-}
-
-/**
- * Complete reference extraction configuration
- */
-export interface ReferenceExtractionConfig {
-  argumentPaths?: Record<string, string[]>; // entityType → argument JSON paths
-  resultPaths?: Record<string, ReferenceResultConfig>;
-  structuredReferences?: StructuredReferenceConfig[];
-}
-
-/**
- * Scope inference configuration
- */
-export interface ScopeConfig {
-  serviceFields?: string[];        // JSON paths to service fields
-  environmentFields?: string[];    // JSON paths to environment fields
-  teamFields?: string[];           // JSON paths to team fields
-}
-
-/**
- * Intent classification configuration
- */
-export interface IntentConfig {
-  keywords: string[];              // Keywords indicating this domain
-  actionPhrases?: string[];        // Action phrases (e.g., "show logs")
-  patterns?: string[];             // Regex patterns for detection
-  confidence?: number;             // Base confidence boost (0-1)
-}
-
-/**
- * Query building configuration
- */
-export interface QueryBuildingConfig {
-  // Query field configuration
-  queryFieldName?: string;         // Argument field name for queries (e.g., 'query', 'expression')
-
-  // For logs
-  errorPatterns?: string[];        // Patterns to extract error codes
-  defaultQuery?: string;           // Default query string
-  keywordEnhancement?: Record<string, string>;  // Templates
-
-  // For metrics
-  expressionTemplates?: Record<string, string>; // keyword → expression
-  defaultExpression?: string;      // Default expression
-  contextualMetrics?: Record<string, string[]>; // keyword → metrics
-
-  // For incidents
-  statusKeywords?: Record<string, string>;      // keyword → status
-  severityPatterns?: string[];     // Patterns to extract severity
-}
-
-/**
- * Context extraction configuration for follow-ups
- */
-export interface ContextExtractionConfig {
-  timeRangeFields?: string[];      // Fields with time ranges
-  titleFields?: string[];          // Fields for keyword extraction
-  summaryFields?: string[];        // Fields for context
-}
-
-/**
- * Auto-injection configuration for follow-ups
- */
-export interface AutoInjectConfig {
-  afterTools?: string[];           // Inject after these tools
-  targetTool?: string;             // Tool to inject (e.g., 'query-logs')
-  conditions?: string[];           // Regex patterns in question
-  arguments?: Record<string, any>; // Default arguments
-}
-
-/**
- * Time window configuration for follow-ups
- */
-export interface TimeWindowConfig {
-  paddingMinutes?: number;         // Padding to add
-  defaultDurationMinutes?: number; // Default duration
-}
-
-/**
- * Keyword extraction configuration for follow-ups
- */
-export interface KeywordExtractionConfig {
-  priorityTerms?: string[];        // Terms to prioritize
-  stopWords?: string[];            // Words to ignore
-  maxKeywords?: number;            // Max keywords to extract
-}
-
-/**
- * Follow-up heuristics configuration
- */
-export interface FollowUpConfig {
-  drillDownPatterns?: string[];    // When to inject this domain's tools
-  contextExtraction?: ContextExtractionConfig;
-  autoInject?: AutoInjectConfig;
-  timeWindow?: TimeWindowConfig;
-  keywordExtraction?: KeywordExtractionConfig;
-  toolDependencies?: ToolDependency[]; // Tool execution dependencies
+  matchType: "user" | "assistant" | "entity";
 }
 
 /**
  * Tool dependency configuration
  */
 export interface ToolDependency {
-  tool: string;                    // Tool name pattern (supports wildcards)
-  dependsOn: string[];             // Tool names this depends on
-  requiresExplicitId?: boolean;    // If true, only depends if ID is not explicitly provided
+  tool: string; // Tool name pattern (supports wildcards)
+  dependsOn: string[]; // Tool names this depends on
+  requiresExplicitId?: boolean; // If true, only depends if ID is not explicitly provided
 }
 
 /**
- * Correlation detection configuration
+ * Base context provided to all handlers
  */
-export interface CorrelationConfig {
-  timeWindowMinutes?: number;      // Time window for correlations
-  eventTypes?: string[];           // Event types to look for
-  anomalyDetection?: boolean;      // Enable anomaly detection
-  spikeThreshold?: number;         // Threshold for spike detection
-  burstThreshold?: number;         // Threshold for burst detection
+export interface HandlerContext {
+  chatId: string;
+  turnNumber: number;
+  conversationHistory: ConversationTurn[];
+  toolResults: ToolResult[];
+  userQuestion: string;
 }
 
 /**
- * Validation configuration
+ * Validation result type
  */
-export interface ValidationConfig {
-  requiredFields?: Record<string, string[]>;    // tool → required fields
-  fieldPatterns?: Record<string, string>;       // field → regex pattern
-  customMessages?: Record<string, string>;      // field → error message
+export interface ValidationResult {
+  valid: boolean;
+  normalizedArgs?: JsonObject;
+  errors?: ValidationError[];
 }
 
 /**
- * Complete domain configuration
+ * Validation error type
  */
-export interface DomainConfig {
-  // Metadata
-  name: string;                    // Unique domain identifier
-  version: string;                 // Semantic version
-  description?: string;            // Human-readable description
-
-  // Tool matching
-  toolPatterns: ToolMatcher[];     // Declarative tool matchers with priority
-  pathDialect?: 'jsonpath';        // Optional override (defaults to JSONPath-lite)
-
-  // Entity extraction
-  entities: EntityConfig[];
-
-  // Reference resolution
-  references: ReferenceConfig[];
-
-  // Reference extraction (NEW)
-  referenceExtraction?: ReferenceExtractionConfig;
-
-  // Scope inference
-  scope?: ScopeConfig;
-
-  // Intent classification
-  intent?: IntentConfig;
-
-  // Query building
-  queryBuilding?: QueryBuildingConfig;
-
-  // Follow-up heuristics
-  followUp?: FollowUpConfig;
-
-  // Correlation detection
-  correlation?: CorrelationConfig;
-
-  // Validation
-  validation?: ValidationConfig;
+export interface ValidationError {
+  field: string;
+  message: string;
+  code: string;
 }
+
+/**
+ * Represents a time window for queries
+ */
+export interface TimeWindow {
+  start: string; // ISO 8601
+  end: string; // ISO 8601
+}
+
+/**
+ * Result of time window expansion
+ */
+export interface ExpansionResult {
+  expanded: boolean;
+  originalWindow: TimeWindow;
+  expandedWindow?: TimeWindow;
+  expansionFactor?: number;
+}
+
+/**
+ * Dependency information for a tool call
+ */
+export interface ToolCallDependency {
+  tool: ToolCall;
+  dependsOn: string[];
+  requiresExplicitId?: boolean;
+}
+
+/**
+ * Time range interface for time window operations
+ */
+export interface TimeRange {
+  start: Date;
+  end: Date;
+}
+
+/**
+ * Represents a modification made by heuristics to the planned tool calls
+ */
+export interface HeuristicModification {
+  heuristicName: string;
+  action: "inject" | "modify" | "remove";
+  originalCall?: ToolCall;
+  modifiedCall?: ToolCall;
+  reason: string;
+  affectedTools?: string[];
+}
+
+/**
+ * Traces the execution of a single tool call
+ */
+export interface ToolExecutionTrace {
+  toolName: string;
+  cacheHit: boolean;
+  executionTimeMs: number;
+  success: boolean;
+  error?: string;
+  resultSizeBytes?: number;
+}
+
+/**
+ * Traces a single iteration of the reasoning loop
+ */
+export interface IterationTrace {
+  iterationNumber: number;
+  plannedTools: ToolCall[];
+  heuristicModifications: HeuristicModification[];
+  toolExecutions: ToolExecutionTrace[];
+  durationMs: number;
+}
+
+/**
+ * Complete execution trace for a copilot answer request
+ */
+export interface ExecutionTrace {
+  traceId: string;
+  chatId: string;
+  startTime: number;
+  iterations: IterationTrace[];
+  finalAnswer?: CopilotAnswer;
+  endTime?: number;
+}
+
+/**
+ * Chat namer configuration
+ */
+export interface ChatNamerConfig {
+  maxLength: number;
+}
+
+/**
+ * Planner response type
+ */
+export type PlannerResponse = {
+  toolCalls: ToolCall[];
+};
+
+/**
+ * Context manager configuration
+ */
+export type ContextConfig = {
+  maxContextTokens: number;
+  systemPriority: number;
+  recentPriority: number;
+  olderPriority: number;
+};
+
+/**
+ * Cache configuration
+ */
+export type CacheConfig = {
+  maxSize: number;
+  ttlMs: number;
+};
+
+/**
+ * Retry strategy configuration
+ */
+export type RetryConfig = {
+  maxRetries: number;
+  baseDelayMs: number;
+  maxDelayMs: number;
+  jitterFactor: number; // 0-1, amount of randomness to add
+};

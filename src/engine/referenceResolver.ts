@@ -1,77 +1,54 @@
-import { domainRegistry } from './domainRegistry.js';
-import type { Entity } from './entityExtractor.js';
+import {
+  ConversationTurn,
+  HandlerContext,
+} from "../types.js";
+import type { ConversationContext } from "../types.js";
+import { ReferenceRegistry } from "./handlers/index.js";
 
-/**
- * Conversation context containing extracted entities
- */
-export interface ConversationContext {
-  entities: Map<string, Entity[]>; // type -> entities
-  chatId: string;
-}
+// Re-export for convenience
+export type { ConversationContext };
 
 /**
  * ReferenceResolver resolves references in user questions to actual entity values
- * using domain configurations.
+ * using programmatic reference handlers.
  */
 export class ReferenceResolver {
+  constructor(private referenceRegistry: ReferenceRegistry) { }
+
   /**
-   * Resolve references in user question to actual entity values using domain configurations
+   * Resolve references in user question to actual entity values using handlers
    */
-  resolveReferences(
+  async resolveReferences(
     question: string,
-    context: ConversationContext
-  ): Map<string, string> {
+    context: ConversationContext,
+    conversationHistory?: ConversationTurn[],
+  ): Promise<Map<string, string>> {
     const resolutions = new Map<string, string>();
     const normalized = question.toLowerCase();
 
-    // Get all domains and their reference patterns
-    const domains = domainRegistry.getAllDomains();
-    const patterns: Array<{ pattern: string; entityType: string; priority: number }> = [];
+    // Extract potential reference patterns from the question
+    const referencePatterns = this.extractReferencePatterns(normalized);
 
-    for (const domain of domains) {
-      for (const ref of domain.references) {
-        patterns.push({
-          pattern: ref.pattern,
-          entityType: ref.entityType,
-          priority: ref.priority ?? 0,
-        });
-      }
-    }
+    for (const { text, entityType } of referencePatterns) {
+      if (this.referenceRegistry.hasHandlers(entityType)) {
+        const handlerContext = this.buildHandlerContext(
+          question,
+          context,
+          conversationHistory,
+        );
 
-    // Sort by priority (higher first)
-    patterns.sort((a, b) => b.priority - a.priority);
-
-    // Try to match patterns
-    for (const { pattern, entityType } of patterns) {
-      const regex = new RegExp(pattern, 'i');
-      if (regex.test(normalized)) {
-        const entity = this.getMostRecentEntity(context, entityType as any);
-        if (entity) {
-          // Extract the matched text from the pattern
-          const match = normalized.match(regex);
-          if (match && match[0]) {
-            resolutions.set(match[0], entity.value);
+        try {
+          const resolution = await this.referenceRegistry.execute(
+            handlerContext,
+            entityType,
+            text,
+          );
+          if (resolution) {
+            resolutions.set(text, resolution);
           }
-
-          // Also add common placeholder formats
-          resolutions.set(`{{${entityType}}}`, entity.value);
-          resolutions.set(`that ${entityType}`, entity.value);
-          resolutions.set(`this ${entityType}`, entity.value);
-          resolutions.set(`the ${entityType}`, entity.value);
-        }
-      }
-    }
-
-    // Handle time references specially
-    if (this.hasTimeReference(normalized)) {
-      const timestamp = this.getMostRecentEntity(context, 'timestamp');
-      if (timestamp) {
-        const resolvedTime = this.resolveTimeReference(normalized, timestamp.value);
-        if (resolvedTime) {
-          resolutions.set('{{time}}', resolvedTime);
-          resolutions.set('since then', resolvedTime);
-          resolutions.set('after that', resolvedTime);
-          resolutions.set('before that', resolvedTime);
+        } catch (error) {
+          console.error(`Reference handler error for ${entityType}:`, error);
+          // Continue with other patterns
         }
       }
     }
@@ -82,15 +59,15 @@ export class ReferenceResolver {
   /**
    * Apply resolutions to question text
    */
-  applyResolutions(
-    question: string,
-    resolutions: Map<string, string>
-  ): string {
+  applyResolutions(question: string, resolutions: Map<string, string>): string {
     let resolved = question;
 
     for (const [placeholder, value] of resolutions.entries()) {
       // Case-insensitive replacement
-      const regex = new RegExp(placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+      const regex = new RegExp(
+        placeholder.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+        "gi",
+      );
       resolved = resolved.replace(regex, value);
     }
 
@@ -98,61 +75,52 @@ export class ReferenceResolver {
   }
 
   /**
-   * Get most recent entity of a given type.
-   * Uses prominence as a tiebreaker when multiple entities have the same timestamp.
+   * Extract potential reference patterns from the question
+   * This is a simple implementation that looks for common patterns
    */
-  private getMostRecentEntity(
-    context: ConversationContext,
-    type: string
-  ): Entity | undefined {
-    const entities = context.entities.get(type);
-    if (!entities || entities.length === 0) return undefined;
-
-    // Find entity with highest timestamp, using prominence as tiebreaker
-    return entities.reduce((best, current) => {
-      // Compare timestamps first
-      if (current.extractedAt > best.extractedAt) return current;
-      if (current.extractedAt < best.extractedAt) return best;
-
-      // Timestamps are equal - use prominence as tiebreaker
-      const currentProm = current.prominence ?? 0;
-      const bestProm = best.prominence ?? 0;
-      return currentProm > bestProm ? current : best;
-    });
-  }
-
-  /**
-   * Check if question has time reference
-   */
-  private hasTimeReference(question: string): boolean {
-    return /(since then|after that|before that|around that time)/i.test(question);
-  }
-
-  /**
-   * Resolve time reference relative to a timestamp
-   */
-  private resolveTimeReference(
+  private extractReferencePatterns(
     question: string,
-    baseTimestamp: string
-  ): string | undefined {
-    try {
-      const baseTime = new Date(baseTimestamp).getTime();
+  ): Array<{ text: string; entityType: string }> {
+    const patterns: Array<{ text: string; entityType: string }> = [];
 
-      if (/since then|after that/i.test(question)) {
-        // Return the base timestamp as the start time
-        return baseTimestamp;
+    // Common reference patterns
+    const referenceRegexes = [
+      { regex: /(that|this|the) incident/gi, entityType: "incident" },
+      { regex: /(that|this|the) ticket/gi, entityType: "ticket" },
+      { regex: /(that|this|the) service/gi, entityType: "service" },
+      { regex: /(those|these|the) logs/gi, entityType: "log_query" },
+      {
+        regex: /(since then|after that|before that)/gi,
+        entityType: "timestamp",
+      },
+    ];
+
+    for (const { regex, entityType } of referenceRegexes) {
+      const matches = question.match(regex);
+      if (matches) {
+        for (const match of matches) {
+          patterns.push({ text: match, entityType });
+        }
       }
-
-      if (/before that/i.test(question)) {
-        // Return a time before the base timestamp (e.g., 1 hour before)
-        const beforeTime = new Date(baseTime - 60 * 60 * 1000);
-        return beforeTime.toISOString();
-      }
-
-      return baseTimestamp;
-    } catch {
-      return undefined;
     }
+
+    return patterns;
+  }
+
+  /**
+   * Build handler context for reference handlers
+   */
+  private buildHandlerContext(
+    question: string,
+    context: ConversationContext,
+    conversationHistory?: ConversationTurn[],
+  ): HandlerContext {
+    return {
+      chatId: context.chatId,
+      turnNumber: conversationHistory?.length || 1,
+      conversationHistory: conversationHistory || [],
+      toolResults: [], // Reference resolution doesn't typically need tool results
+      userQuestion: question,
+    };
   }
 }
-
