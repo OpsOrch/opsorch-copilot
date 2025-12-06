@@ -9,9 +9,10 @@
 
 import type { FollowUpHandler } from "../handlers.js";
 import type { ToolCall, JsonObject } from "../../../types.js";
+import { generateSearchExpression } from "../logQueryParser.js";
 
 export const serviceFollowUpHandler: FollowUpHandler = async (
-  _context,
+  context,
   toolResult,
 ): Promise<ToolCall[]> => {
   const suggestions: ToolCall[] = [];
@@ -33,18 +34,46 @@ export const serviceFollowUpHandler: FollowUpHandler = async (
     const serviceName = service.name;
 
     if (serviceName && typeof serviceName === "string") {
-      // Suggest discovering available metrics for the service
-      suggestions.push({
-        name: "describe-metrics",
-        arguments: {
-          scope: { service: serviceName },
-        },
-      });
+      // Suggest discovering available metrics for the service, but only if not already discovered
+      // Check existing tool results (current turn) and history
+      const alreadyDiscovered =
+        context.toolResults.some(
+          (r) =>
+            r.name === "describe-metrics" &&
+            (r.arguments as JsonObject)?.scope &&
+            ((r.arguments as JsonObject).scope as JsonObject).service ===
+            serviceName,
+        ) ||
+        context.conversationHistory.some((turn) =>
+          turn.toolResults?.some(
+            (r) =>
+              r.name === "describe-metrics" &&
+              (r.arguments as JsonObject)?.scope &&
+              ((r.arguments as JsonObject).scope as JsonObject).service ===
+              serviceName,
+          ),
+        );
+
+      if (!alreadyDiscovered) {
+        suggestions.push({
+          name: "describe-metrics",
+          arguments: {
+            scope: { service: serviceName },
+          },
+        });
+      }
+
+      // Use user question to determine intent for log search
+      // e.g. "why is checkout slow?" -> "slow OR latency"
+      const searchExpression = generateSearchExpression(
+        context.userQuestion || ""
+      );
+
       suggestions.push({
         name: "query-logs",
         arguments: {
           scope: { service: serviceName },
-          expression: { severityIn: ["error"] },
+          expression: { search: searchExpression },
           limit: 20,
         },
       });

@@ -56,9 +56,10 @@ test('logCorrelationHandler', async (t) => {
         // 1 log is not enough for burst (<5), but severity is critical so -> critical_error event
         assert.equal(events.length, 1);
         assert.equal(events[0].type, 'critical_error');
-        assert.ok((events[0].metadata as Record<string, unknown>)?.message && 
-                  typeof events[0].metadata.message === 'string' && 
-                  events[0].metadata.message.includes('System crash'));
+        const metadata = events[0].metadata as Record<string, unknown>;
+        assert.ok(metadata?.message &&
+            typeof metadata.message === 'string' &&
+            metadata.message.includes('System crash'));
     });
 
     // --- logCorrelationHandler Tests ---

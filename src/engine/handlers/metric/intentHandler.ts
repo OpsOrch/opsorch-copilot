@@ -36,14 +36,7 @@ export const metricIntentHandler: IntentHandler = async (
   }
 
   const confidence = 0.9;
-  const hasPercentile =
-    question.includes("p95") ||
-    question.includes("p99") ||
-    question.includes("percentile");
-  const hasPerformance =
-    question.includes("performance") ||
-    question.includes("slow") ||
-    question.includes("fast");
+
 
   // Contextual patterns for navigation
   const isContinuation =
@@ -61,8 +54,7 @@ export const metricIntentHandler: IntentHandler = async (
     suggestedTools.unshift("describe-metrics");
   }
 
-  let intent: UserIntent =
-    hasPerformance || hasPercentile ? "observability" : "observability";
+  let intent: UserIntent = "observability";
   if (isContinuation) {
     intent = "navigation";
   }

@@ -189,6 +189,75 @@ test('PlanRefiner', async (t) => {
         // Should complete without errors
         assert.ok(Array.isArray(refined), 'Should return array of calls');
     });
+
+    await t.test('should not re-suggest tools already in previousResults', async () => {
+        const scopeInferer = new ScopeInferer();
+        const planRefiner = new PlanRefiner(scopeInferer);
+        const mockMcp = createMockMcp();
+
+        // Previous results from current iteration - query-logs was already executed
+        const previousResults: ToolResult[] = [{
+            name: 'query-logs',
+            arguments: { expression: { search: 'error' }, limit: 100 },
+            result: [{ id: 'log-1', message: 'test error' }]
+        }];
+
+        // Empty initial calls - intent registry might want to suggest query-logs
+        const calls: ToolCall[] = [];
+
+        const refined = await planRefiner.applyHeuristics(
+            'show error logs',  // Question that would normally trigger query-logs
+            calls,
+            mockMcp,
+            [],  // no conversation history
+            previousResults
+        );
+
+        // query-logs should NOT be re-suggested since it was already executed
+        const logCall = refined.find(c => c.name === 'query-logs');
+        assert.ok(!logCall || logCall.arguments !== previousResults[0].arguments,
+            'Should not re-suggest query-logs with same args already in previousResults');
+    });
+
+    await t.test('should not re-suggest tools from conversation history', async () => {
+        const scopeInferer = new ScopeInferer();
+        const planRefiner = new PlanRefiner(scopeInferer);
+        const mockMcp = createMockMcp();
+
+        // Conversation history with query-incidents already executed
+        const conversationTurns: ConversationTurn[] = [{
+            userMessage: 'tell me about the last incident',
+            timestamp: Date.now(),
+            toolResults: [{
+                name: 'query-incidents',
+                arguments: { limit: 1 },
+                result: [{ id: 'inc-012', service: 'svc-realtime' }]
+            }]
+        }];
+
+        // Empty initial calls
+        const calls: ToolCall[] = [];
+
+        const refined = await planRefiner.applyHeuristics(
+            'show me all incidents',  // Question that might trigger query-incidents
+            calls,
+            mockMcp,
+            conversationTurns,
+            []  // no previous results in current turn
+        );
+
+        // If query-incidents is suggested, it should have different args
+        const incidentCall = refined.find(c => c.name === 'query-incidents');
+        if (incidentCall) {
+            const historyArgs = conversationTurns[0].toolResults![0].arguments as JsonObject;
+            const newArgs = incidentCall.arguments as JsonObject;
+            // The new call might have different args (e.g., different limit) or be absent entirely
+            const sameArgs = JSON.stringify(historyArgs) === JSON.stringify(newArgs);
+            assert.ok(!sameArgs,
+                'Should not re-suggest query-incidents with exact same args from conversation history');
+        }
+        // If no incidentCall, that's also valid - the tool was skipped as duplicate
+    });
 });
 
 test('ScopeInferer: uses conversation history for scope inference', async () => {

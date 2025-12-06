@@ -10,6 +10,7 @@
 
 import type { FollowUpHandler } from "../handlers.js";
 import type { ToolCall, JsonObject } from "../../../types.js";
+import { generateSearchExpression } from "../logQueryParser.js";
 
 export const metricFollowUpHandler: FollowUpHandler = async (
   _context,
@@ -36,16 +37,19 @@ export const metricFollowUpHandler: FollowUpHandler = async (
 
     if (service && typeof service === "string") {
       // If metric shows latency or errors, suggest checking logs
-      if (
-        typeof metricName === "string" &&
-        (metricName.toLowerCase().includes("latency") ||
-          metricName.toLowerCase().includes("error"))
-      ) {
+      if (typeof metricName === "string") {
+
+        // Use smart search expression based on metric name
+        // e.g. "http_request_latency" -> "latency OR lag"
+        // "error_count" -> "error"
+        // vocabulary handles many other cases (cpu, memory, etc.)
+        const searchExpression = generateSearchExpression(metricName);
+
         suggestions.push({
           name: "query-logs",
           arguments: {
             scope: { service },
-            expression: { severityIn: ["error"] },
+            expression: { search: searchExpression },
             limit: 50,
           },
         });

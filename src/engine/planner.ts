@@ -16,10 +16,14 @@ export async function requestInitialPlan(
   llm: LlmClient,
   tools: Tool[],
   history: LlmMessage[] = [],
+  anchorTime?: string,
 ): Promise<PlannerResponse> {
   const toolContext = buildToolContext(tools);
   const messages: LlmMessage[] = [
     { role: "system", content: buildPlannerPrompt(toolContext) },
+    ...(anchorTime
+      ? [{ role: "system", content: `Current Time: ${anchorTime}` } as LlmMessage]
+      : []),
     ...history,
     { role: "user", content: question },
   ];
@@ -59,6 +63,7 @@ export async function requestFollowUpPlan(
   tools: Tool[],
   results: ToolResult[],
   history: LlmMessage[] = [],
+  anchorTime?: string,
 ): Promise<PlannerResponse> {
   const toolContext = buildToolContext(tools);
   const resultSummary = summarizeResults(results) || "No tool results yet.";
@@ -68,6 +73,9 @@ export async function requestFollowUpPlan(
       role: "system",
       content: buildRefinementPrompt(toolContext, results.length),
     },
+    ...(anchorTime
+      ? [{ role: "system", content: `Current Time: ${anchorTime}` } as LlmMessage]
+      : []),
     ...history,
     {
       role: "user",
@@ -93,6 +101,11 @@ export async function requestFollowUpPlan(
     }
 
     if (!reply.toolCalls || reply.toolCalls.length === 0) {
+      // This is expected behavior when the LLM has sufficient data to answer.
+      // The follow-up engine may still suggest speculative tool calls.
+      console.log(
+        `[Planner] Follow-up plan: LLM returned no tool calls (sufficient data or intentional stop)`,
+      );
       return { toolCalls: [] };
     }
 

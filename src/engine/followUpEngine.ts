@@ -1,6 +1,7 @@
-import { JsonObject, ToolCall, ToolResult, ConversationTurn } from "../types.js";
+import { ToolCall, ToolResult, ConversationTurn } from "../types.js";
 import { FollowUpRegistry } from "./handlers/index.js";
 import { HandlerContext } from "../types.js";
+import { getToolKey } from "./toolKeyExtractor.js";
 
 /**
  * Handler-based FollowUpEngine that uses programmatic follow-up handlers
@@ -69,6 +70,7 @@ export class FollowUpEngine {
 
   /**
    * Remove duplicate tool calls and prioritize based on relevance
+   * Uses shared getToolKey for fuzzy timestamp matching to catch near-duplicates
    */
   private deduplicateAndPrioritize(
     suggestions: ToolCall[],
@@ -77,38 +79,24 @@ export class FollowUpEngine {
   ): ToolCall[] {
     const seen = new Set<string>();
 
-    // Helper to generate a stable key for a tool call
-    const getKey = (name: string, args: JsonObject | undefined) => {
-      // Sort keys to ensure stability
-      const sortedArgs = args
-        ? Object.keys(args)
-          .sort()
-          .reduce((acc: JsonObject, key) => {
-            acc[key] = args[key];
-            return acc;
-          }, {})
-        : {};
-      return `${name}:${JSON.stringify(sortedArgs)}`;
-    };
-
     // Mark existing calls from history as seen
     for (const turn of history) {
       if (turn.toolResults) {
         for (const res of turn.toolResults) {
-          seen.add(getKey(res.name, res.arguments));
+          seen.add(getToolKey(res.name, res.arguments));
         }
       }
     }
 
     // Mark current results as seen
     for (const res of currentResults) {
-      seen.add(getKey(res.name, res.arguments));
+      seen.add(getToolKey(res.name, res.arguments));
     }
 
     const deduplicated: ToolCall[] = [];
 
     for (const suggestion of suggestions) {
-      const key = getKey(suggestion.name, suggestion.arguments);
+      const key = getToolKey(suggestion.name, suggestion.arguments);
       if (!seen.has(key)) {
         seen.add(key);
         deduplicated.push(suggestion);

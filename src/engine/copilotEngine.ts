@@ -11,7 +11,7 @@ import {
   ToolResult,
 } from "../types.js";
 import { requestFollowUpPlan, requestInitialPlan } from "./planner.js";
-import { synthesizeCopilotAnswer } from "./synthesis.js";
+import { synthesizeCopilotAnswer } from "./answerGenerator.js";
 import { runToolCalls } from "./toolRunner.js";
 
 import { ResultCache } from "./resultCache.js";
@@ -31,7 +31,7 @@ import {
   referenceRegistry,
 } from "./capabilityRegistry.js";
 
-const DEFAULT_MAX_ITERATIONS = 3;
+const DEFAULT_MAX_ITERATIONS = 5;
 const MAX_TOOL_CALLS_PER_ITERATION = 5;
 
 /**
@@ -319,6 +319,7 @@ export class CopilotEngine {
 
     // Use resolved question for planning
     const questionForPlanning = resolvedQuestion;
+    const anchorTime = new Date().toISOString();
 
     const allResults: ToolResult[] = [];
     const allExtractedEntities: Entity[] = [];
@@ -344,6 +345,7 @@ export class CopilotEngine {
           this.config.llm,
           this.filterToolsForLLM(this.mcp.getTools()),
           conversationHistory,
+          anchorTime,
         );
         plannedCalls = plan.toolCalls ?? [];
 
@@ -380,6 +382,7 @@ export class CopilotEngine {
           this.filterToolsForLLM(this.mcp.getTools()),
           formattedResults,
           conversationHistory,
+          anchorTime,
         );
         plannedCalls = plan.toolCalls ?? [];
 

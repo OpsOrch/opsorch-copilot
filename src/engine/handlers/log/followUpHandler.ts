@@ -14,7 +14,7 @@ import type { ToolCall, JsonObject } from "../../../types.js";
 import { HandlerUtils } from "../utils.js";
 
 export const logFollowUpHandler: FollowUpHandler = async (
-  _context,
+  context,
   toolResult,
 ): Promise<ToolCall[]> => {
   const suggestions: ToolCall[] = [];
@@ -67,22 +67,33 @@ export const logFollowUpHandler: FollowUpHandler = async (
 
     // Suggest discovering available metrics for affected services
     for (const service of Array.from(services).slice(0, 2)) {
-      suggestions.push({
-        name: "describe-metrics",
-        arguments: {
-          scope: { service },
-        },
-      });
+      // Deduplicate against existing results and history
+      const alreadyDiscovered = HandlerUtils.isDuplicateToolCall(
+        context,
+        "describe-metrics",
+        service,
+      );
+
+      if (!alreadyDiscovered) {
+        suggestions.push({
+          name: "describe-metrics",
+          arguments: {
+            scope: { service },
+          },
+        });
+      }
     }
 
     if (services.size > 0) {
-      suggestions.push({
-        name: "query-incidents",
-        arguments: {
-          statuses: ["active"],
-          limit: 10,
-        },
-      });
+      if (!HandlerUtils.isDuplicateToolCall(context, "query-incidents")) {
+        suggestions.push({
+          name: "query-incidents",
+          arguments: {
+            statuses: ["active"],
+            limit: 10,
+          },
+        });
+      }
     }
   }
 

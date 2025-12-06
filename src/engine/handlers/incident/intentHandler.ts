@@ -64,6 +64,10 @@ export const incidentIntentHandler: IntentHandler = async (
     (result) =>
       result.name === "query-incidents" || result.name === "get-incident",
   );
+  const hasIncidentEntity = context.conversationHistory.slice(-3).some(
+    (turn) => turn.entities?.some((e) => e.type === "incident"),
+  );
+  const hasContext = hasRecentIncidents || hasIncidentEntity;
 
   if (hasRecentIncidents && question.includes("timeline")) {
     // User asking for timeline after incident query
@@ -75,14 +79,22 @@ export const incidentIntentHandler: IntentHandler = async (
     };
   }
 
+  const suggestedTools: string[] = [];
+  // Only suggest query-incidents if no context OR explicit request
+  if (!hasContext || actionMatches.length > 0) {
+    suggestedTools.push("query-incidents");
+  }
+  suggestedTools.push("get-incident-timeline");
+
+  let reasoningBase = `Incident investigation intent detected (keyword matches: ${keywordMatches.join(", ")}, action matches: ${actionMatches.join(", ")}, patterns: ${patternMatches.length})`;
+  if (hasContext) {
+    reasoningBase += " - incident context found";
+  }
+
   return {
     intent: "investigation",
     confidence,
-    suggestedTools: [
-      "query-incidents",
-      "get-incident",
-      "get-incident-timeline",
-    ],
-    reasoning: `Incident investigation intent detected (keyword matches: ${keywordMatches.join(", ")}, action matches: ${actionMatches.join(", ")}, patterns: ${patternMatches.length})`,
+    suggestedTools,
+    reasoning: reasoningBase,
   };
 };

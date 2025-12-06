@@ -133,3 +133,164 @@ test('LRU: recently accessed items are not evicted', () => {
     assert.deepEqual(cache.get(call3), { name: 'recent', result: '3' }); // Still there
     assert.deepEqual(cache.get(call4), { name: 'new', result: '4' }); // Just added
 });
+
+// Tests for fuzzy timestamp normalization
+test('fuzzy matches timestamps within 60s for cache hits', () => {
+    const cache = new ResultCache({ maxSize: 10, ttlMs: 60000 });
+
+    // Two calls with timestamps differing by just seconds (same minute)
+    const call1: ToolCall = {
+        name: 'query-logs',
+        arguments: {
+            start: '2025-12-06T21:25:15.971Z',
+            end: '2025-12-06T21:55:15.971Z',
+        }
+    };
+
+    const call2: ToolCall = {
+        name: 'query-logs',
+        arguments: {
+            start: '2025-12-06T21:25:45.999Z', // +30s
+            end: '2025-12-06T21:55:30.123Z',   // +15s
+        }
+    };
+
+    const result: ToolResult = { name: 'query-logs', result: { logs: [] } };
+
+    cache.set(call1, result);
+
+    // call2 should hit the cache because timestamps are within 60s
+    const retrieved = cache.get(call2);
+    assert.deepEqual(retrieved, result);
+});
+
+test('fuzzy matches across minute boundaries', () => {
+    const cache = new ResultCache({ maxSize: 10, ttlMs: 60000 });
+
+    const call1: ToolCall = {
+        name: 'query-logs',
+        arguments: {
+            start: '2025-12-06T21:25:58.000Z',
+            end: '2025-12-06T21:55:00.000Z',
+        }
+    };
+
+    const call2: ToolCall = {
+        name: 'query-logs',
+        arguments: {
+            start: '2025-12-06T21:26:02.000Z', // +4s, matches (old logic would fail here)
+            end: '2025-12-06T21:55:00.000Z',
+        }
+    };
+
+    const result: ToolResult = { name: 'query-logs', result: { logs: [] } };
+
+    cache.set(call1, result);
+    assert.deepEqual(cache.get(call2), result);
+});
+
+test('does not cache hit if difference > 60s', () => {
+    const cache = new ResultCache({ maxSize: 10, ttlMs: 60000 });
+
+    const call1: ToolCall = {
+        name: 'query-logs',
+        arguments: {
+            start: '2025-12-06T21:25:15.971Z',
+            end: '2025-12-06T21:55:15.971Z',
+        }
+    };
+
+    const call2: ToolCall = {
+        name: 'query-logs',
+        arguments: {
+            start: '2025-12-06T21:26:16.971Z', // +61s
+            end: '2025-12-06T21:55:15.971Z',
+        }
+    };
+
+    const result: ToolResult = { name: 'query-logs', result: { logs: [] } };
+
+    cache.set(call1, result);
+
+    // call2 should NOT hit the cache because start > 60s diff
+    const retrieved = cache.get(call2);
+    assert.equal(retrieved, null);
+});
+
+test('fuzzy matches nested timestamps in scope objects', () => {
+    const cache = new ResultCache({ maxSize: 10, ttlMs: 60000 });
+
+    const call1: ToolCall = {
+        name: 'query-metrics',
+        arguments: {
+            expression: { metricName: 'http_errors' },
+            start: '2025-12-06T17:20:00.000Z',
+            end: '2025-12-06T21:40:00.000Z',
+            scope: { service: 'svc-payments' },
+        }
+    };
+
+    const call2: ToolCall = {
+        name: 'query-metrics',
+        arguments: {
+            expression: { metricName: 'http_errors' },
+            start: '2025-12-06T17:20:55.500Z', // +55s
+            end: '2025-12-06T21:40:45.999Z',   // +45s
+            scope: { service: 'svc-payments' },
+        }
+    };
+
+    const result: ToolResult = { name: 'query-metrics', result: { series: [] } };
+
+    cache.set(call1, result);
+    assert.deepEqual(cache.get(call2), result); // Should cache hit
+});
+
+// Tests for hit/miss tracking
+test('stats returns correct hit rate', () => {
+    const cache = new ResultCache({ maxSize: 10, ttlMs: 60000 });
+
+    const call: ToolCall = { name: 'test', arguments: { a: 1 } };
+    const result: ToolResult = { name: 'test', result: 'data' };
+
+    // First access should be a miss
+    cache.get(call);
+
+    // Store and retrieve should be a hit
+    cache.set(call, result);
+    cache.get(call);
+
+    const stats = cache.stats();
+    assert.equal(stats.hits, 1);
+    assert.equal(stats.misses, 1);
+    assert.equal(stats.hitRate, 0.5);
+});
+
+test('stats returns zero hit rate for empty cache', () => {
+    const cache = new ResultCache({ maxSize: 10, ttlMs: 60000 });
+
+    const stats = cache.stats();
+    assert.equal(stats.hits, 0);
+    assert.equal(stats.misses, 0);
+    assert.equal(stats.hitRate, 0);
+});
+
+test('expired entries count as misses', async () => {
+    const cache = new ResultCache({ maxSize: 10, ttlMs: 50 });
+
+    const call: ToolCall = { name: 'test', arguments: {} };
+    const result: ToolResult = { name: 'test', result: 'data' };
+
+    cache.set(call, result);
+    cache.get(call); // Hit
+
+    // Wait for expiration
+    await new Promise(resolve => setTimeout(resolve, 60));
+
+    cache.get(call); // Miss (expired)
+
+    const stats = cache.stats();
+    assert.equal(stats.hits, 1);
+    assert.equal(stats.misses, 1);
+});
+

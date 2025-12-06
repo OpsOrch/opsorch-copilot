@@ -41,18 +41,27 @@ export const ticketIntentHandler: IntentHandler = async (
 
   const confidence = 0.8;
   const isJira = question.includes("jira");
-  const suggestedTools: string[] = ["query-tickets"];
+  const hasSpecificTicket = /ticket-?\d+/i.test(question);
+  const suggestedTools: string[] = [];
 
-  if (
-    question.includes("details") ||
-    question.includes("status") ||
-    /ticket-?\d+/i.test(question)
-  ) {
+  // Check for ticket context in recent history (used in logic below)
+  const hasTicketHistory = context.conversationHistory.slice(-3).some(
+    (turn) => turn.entities?.some((e) => e.type === "ticket"),
+  );
+
+  if (hasSpecificTicket) {
+    // Specific ticket ID mentioned - get-ticket is sufficient
     suggestedTools.push("get-ticket");
+  } else {
+    // Only suggest query-tickets if no context OR explicit request
+    if (!hasTicketHistory || actionMatches.length > 0) {
+      suggestedTools.push("query-tickets");
+    }
   }
 
   let reasoning = `Ticket query detected (keyword matches: ${keywordMatches.join(", ")}, action matches: ${actionMatches.join(", ")})`;
   if (isJira) reasoning += " - JIRA context";
+  if (hasTicketHistory) reasoning += " - ticket context found in history";
 
   return {
     intent: "status_check",

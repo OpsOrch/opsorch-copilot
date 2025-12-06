@@ -7,7 +7,13 @@ import { ToolResult, HandlerContext } from '../../../../src/types.js';
 
 test('alertFollowUpHandler', async (t) => {
     // Mock context
-    const context = { chatId: 'test' } as HandlerContext;
+    const context: HandlerContext = {
+        chatId: 'test',
+        turnNumber: 1,
+        conversationHistory: [],
+        toolResults: [],
+        userQuestion: 'test question'
+    };
 
     await t.test('should return empty suggestions for invalid result', async () => {
         const result: ToolResult = {
@@ -116,4 +122,106 @@ test('alertFollowUpHandler', async (t) => {
         const globalMetricSuggestion = suggestions.find(s => s.name === 'describe-metrics' && Object.keys(s.arguments || {}).length === 0);
         assert.ok(globalMetricSuggestion);
     });
+
+    await t.test('should propagate query to related incident queries', async () => {
+        const result: ToolResult = {
+            name: 'query-alerts',
+            result: [
+                { id: '1', status: 'active', service: 'kafka-consumer' },
+            ],
+            arguments: { query: 'kafka problems' },
+        };
+        const suggestions = await alertFollowUpHandler(context, result);
+
+        const incidentSuggestion = suggestions.find(s => s.name === 'query-incidents');
+        assert.ok(incidentSuggestion);
+        assert.equal(
+            (incidentSuggestion.arguments as { query?: string }).query,
+            'kafka problems',
+            'should propagate query to query-incidents'
+        );
+    });
+    await t.test('should NOT suggest describe-metrics if already called in current turn results', async () => {
+        const result: ToolResult = {
+            name: 'query-alerts',
+            result: [
+                { id: '10', status: 'active', service: 'svc-dup-alert' },
+            ],
+        };
+
+        const contextWithExisting: HandlerContext = {
+            ...context,
+            toolResults: [
+                {
+                    name: 'describe-metrics', // Simulate it happened in this turn
+                    result: {},
+                    arguments: { scope: { service: 'svc-dup-alert' } }
+                }
+            ]
+        };
+
+        const suggestions = await alertFollowUpHandler(contextWithExisting, result);
+        const hasMetrics = suggestions.some(s => s.name === 'describe-metrics');
+        assert.equal(hasMetrics, false, 'Should deduplicate describe-metrics against current results');
+    });
+
+    await t.test('should NOT suggest describe-metrics if already called in history', async () => {
+        const result: ToolResult = {
+            name: 'query-alerts',
+            result: [
+                { id: '11', status: 'active', service: 'svc-hist-alert' },
+            ],
+        };
+
+        const contextWithHistory: HandlerContext = {
+            ...context,
+            conversationHistory: [{
+                userMessage: 'previous check',
+                assistantResponse: 'checked',
+                timestamp: Date.now(),
+                toolResults: [
+                    {
+                        name: 'describe-metrics',
+                        result: {},
+                        arguments: { scope: { service: 'svc-hist-alert' } }
+                    }
+                ]
+            }]
+        };
+
+        const suggestions = await alertFollowUpHandler(contextWithHistory, result);
+        const hasMetrics = suggestions.some(s => s.name === 'describe-metrics');
+        assert.equal(hasMetrics, false, 'Should deduplicate describe-metrics against history');
+    });
+
+
+    await t.test('should NOT suggest query-logs if already called in history', async () => {
+        const result: ToolResult = {
+            name: 'query-alerts',
+            result: [
+                { id: '12', status: 'active', service: 'svc-logs-dup' },
+            ],
+        };
+
+        const contextWithHistory: HandlerContext = {
+            ...context,
+            conversationHistory: [{
+                userMessage: 'previous check',
+                assistantResponse: 'checked',
+                timestamp: Date.now(),
+                toolResults: [
+                    {
+                        name: 'query-logs',
+                        result: [],
+                        arguments: { scope: { service: 'svc-logs-dup' } }
+                    }
+                ]
+            }]
+        };
+
+        const suggestions = await alertFollowUpHandler(contextWithHistory, result);
+        const hasLogs = suggestions.some(s => s.name === 'query-logs');
+        assert.equal(hasLogs, false, 'Should deduplicate query-logs against history');
+    });
 });
+

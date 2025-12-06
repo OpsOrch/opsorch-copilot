@@ -12,8 +12,47 @@
  */
 
 import type { FollowUpHandler } from "../handlers.js";
-import type { ToolCall, JsonObject } from "../../../types.js";
+import type { ToolCall, JsonObject, HandlerContext } from "../../../types.js";
 import { HandlerUtils } from "../utils.js";
+import { generateSearchExpression } from "../logQueryParser.js";
+
+/**
+ * Helper to track and deduplicate suggestions within a handler.
+ * Prevents the same tool+scope combination from being suggested multiple times.
+ */
+class SuggestionTracker {
+  private seen = new Set<string>();
+  private context: HandlerContext;
+
+  constructor(context: HandlerContext) {
+    this.context = context;
+  }
+
+  add(call: ToolCall): boolean {
+    // Create a key based on tool name and service scope (if present)
+    const scope = call.arguments?.scope as JsonObject | undefined;
+    const service = (scope?.service as string) ?? "_no_service_";
+    const key = `${call.name}:${service}`;
+
+    if (this.seen.has(key)) {
+      return false; // Duplicate within this suggestion batch
+    }
+
+    // Check history/results using generalized utility
+    if (service !== "_no_service_") {
+      if (HandlerUtils.isDuplicateToolCall(this.context, call.name, service)) {
+        return false;
+      }
+    }
+
+    this.seen.add(key);
+    return true;
+  }
+
+  filter(calls: ToolCall[]): ToolCall[] {
+    return calls.filter((call) => this.add(call));
+  }
+}
 
 /**
  * Follow-up handler for incident-related tool results
@@ -25,6 +64,7 @@ export const incidentFollowUpHandler: FollowUpHandler = async (
   toolResult,
 ): Promise<ToolCall[]> => {
   const suggestions: ToolCall[] = [];
+  const tracker = new SuggestionTracker(context);
 
   if (!toolResult.result || typeof toolResult.result !== "object") {
     return suggestions;
@@ -37,6 +77,10 @@ export const incidentFollowUpHandler: FollowUpHandler = async (
   } else {
     incidents = [toolResult.result as JsonObject];
   }
+
+  // Extract search query from original tool call if available
+  // This allows propagating search terms (e.g., "kafka") to related entity queries
+  const originalQuery = toolResult.arguments?.query as string | undefined;
 
   // Check for drill-down patterns
   const question = context.userQuestion.toLowerCase();
@@ -74,17 +118,19 @@ export const incidentFollowUpHandler: FollowUpHandler = async (
     const updatedAt = firstIncident.updatedAt;
 
     if (incidentId && typeof incidentId === "string") {
-      // Auto-inject timeline if conditions are met
-      if (shouldAutoInject || question.includes("timeline")) {
-        suggestions.push({
-          name: "get-incident-timeline",
-          arguments: {
-            id: incidentId,
-          },
-        });
+      // Always suggest timeline when an incident is found, as it provides
+      // critical progression data that static incident text lacks.
+      suggestions.push({
+        name: "get-incident-timeline",
+        arguments: {
+          id: incidentId,
+        },
+      });
 
+      // Auto-inject drill-down tools if conditions are met
+      if (shouldAutoInject || question.includes("timeline")) {
         // For root cause analysis, check logs and metrics if service is known
-        if (shouldAutoInject && service && typeof service === "string") {
+        if (service && typeof service === "string") {
           // Use incident time window if available
           const timeWindow = HandlerUtils.expandTimeWindow(
             typeof createdAt === "string" ? createdAt : undefined,
@@ -100,11 +146,18 @@ export const incidentFollowUpHandler: FollowUpHandler = async (
             },
           });
 
+          // Extract smarter search terms from title if available
+          const title = firstIncident.title;
+          const searchExpression =
+            typeof title === "string"
+              ? generateSearchExpression(title)
+              : "error OR exception";
+
           suggestions.push({
             name: "query-logs",
             arguments: {
               scope: { service },
-              expression: { search: "error OR exception" },
+              expression: { search: searchExpression },
               start: timeWindow.start.toISOString(),
               end: timeWindow.end.toISOString(),
               limit: 100,
@@ -113,22 +166,17 @@ export const incidentFollowUpHandler: FollowUpHandler = async (
 
           // Fetch related alerts for the service - alerts provide critical context
           // about what monitoring detected during the incident
+          // Propagate the original search query if present
           suggestions.push({
             name: "query-alerts",
             arguments: {
               scope: { service },
               statuses: ["firing", "acknowledged"],
               limit: 10,
+              ...(originalQuery && { query: originalQuery }),
             },
           });
         }
-      } else if (hasDrillDown) {
-        // Suggest getting incident timeline for drill-down
-        // (get-incident is redundant since query-incidents returns the same data)
-        suggestions.push({
-          name: "get-incident-timeline",
-          arguments: { id: incidentId },
-        });
       }
     }
 
@@ -182,14 +230,26 @@ export const incidentFollowUpHandler: FollowUpHandler = async (
         .filter((s): s is string => typeof s === "string")
         .slice(0, 1);
 
-      const timeWindow = HandlerUtils.expandTimeWindow(undefined, undefined, 15);
+      const timeWindow = HandlerUtils.expandTimeWindow(
+        undefined,
+        undefined,
+        15,
+      );
 
       for (const serviceValue of services) {
+        // Extract smarter search terms from title if available
+        // Find the incident object corresponding to this service
+        const incident = incidents.find((inc) => inc.service === serviceValue);
+        const searchExpression =
+          incident && typeof incident.title === "string"
+            ? generateSearchExpression(incident.title as string)
+            : "error OR exception";
+
         suggestions.push({
           name: "query-logs",
           arguments: {
             scope: { service: serviceValue },
-            expression: { search: "error OR exception" },
+            expression: { search: searchExpression },
             start: timeWindow.start.toISOString(),
             end: timeWindow.end.toISOString(),
             limit: 100,
@@ -203,17 +263,20 @@ export const incidentFollowUpHandler: FollowUpHandler = async (
           },
         });
 
+        // Propagate the original search query if present
         suggestions.push({
           name: "query-alerts",
           arguments: {
             scope: { service: serviceValue },
             statuses: ["firing", "pending"],
             limit: 20,
+            ...(originalQuery && { query: originalQuery }),
           },
         });
       }
     }
   }
 
-  return suggestions;
+  // Deduplicate suggestions before returning
+  return tracker.filter(suggestions);
 };

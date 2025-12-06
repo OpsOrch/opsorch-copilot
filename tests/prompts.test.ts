@@ -5,6 +5,7 @@ import {
     buildPlannerPrompt,
     buildJsonPlannerPrompt,
     buildRefinementPrompt,
+    buildJsonRefinementPrompt,
     buildFinalAnswerPrompt,
     buildToolContext,
 } from '../src/prompts.js';
@@ -43,8 +44,20 @@ test('prompts', async (t) => {
         const toolContext = 'Available tools: query-incidents';
         const prompt = buildRefinementPrompt(toolContext, 3);
         assert.ok(prompt.includes('3 tool call'));
-        assert.ok(prompt.includes('Refinement Planning'));
+        assert.ok(prompt.includes('Refinement'));
         assert.ok(prompt.includes(toolContext));
+        assert.ok(prompt.includes('NEVER INVENT'));
+    });
+
+    await t.test('buildJsonRefinementPrompt includes result summary and shared rules', () => {
+        const toolList = 'query-incidents\nquery-alerts';
+        const resultSummary = 'query-incidents returned error';
+        const prompt = buildJsonRefinementPrompt(toolList, resultSummary);
+        assert.ok(prompt.includes('JSON Refinement Mode'));
+        assert.ok(prompt.includes(resultSummary));
+        assert.ok(prompt.includes('NEVER INVENT'));
+        assert.ok(prompt.includes('reasoning'));
+        assert.ok(prompt.includes('toolCalls'));
     });
 
     await t.test('buildFinalAnswerPrompt includes answer structure', () => {

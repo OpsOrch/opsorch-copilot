@@ -76,6 +76,49 @@ test('referenceBuilder', async (t) => {
         assert.ok(refs.alerts.includes('ALT-1')); // from array result
         assert.ok(refs.alerts.includes('ALT-2')); // from array result
         assert.ok(refs.alerts.includes('ALT-3')); // from args
+        // Verify alert IDs are NOT incorrectly added to incidents
+        assert.ok(!refs.incidents || !refs.incidents.includes('ALT-1'));
+        assert.ok(!refs.incidents || !refs.incidents.includes('ALT-2'));
+        assert.ok(!refs.incidents || !refs.incidents.includes('ALT-3'));
+    });
+
+    await t.test('extracts services from alerts and scope args', () => {
+        const results: ToolResult[] = [
+            {
+                name: 'query-alerts',
+                result: [
+                    {
+                        id: 'ALT-1',
+                        scope: { service: 'svc-payments' },
+                        fields: {
+                            service: 'svc-database',
+                            affectedServices: ['svc-checkout', 'svc-catalog']
+                        }
+                    }
+                ],
+                arguments: { scope: { service: 'svc-api-gateway' } }
+            },
+            {
+                name: 'query-metrics',
+                result: [],
+                arguments: { scope: { service: 'svc-notifications' } }
+            }
+        ];
+
+        const refs = buildReferences(results);
+        assert.ok(refs);
+        assert.ok(refs.services);
+        // From alert scope
+        assert.ok(refs.services.includes('svc-payments'));
+        // From alert fields.service
+        assert.ok(refs.services.includes('svc-database'));
+        // From alert fields.affectedServices
+        assert.ok(refs.services.includes('svc-checkout'));
+        assert.ok(refs.services.includes('svc-catalog'));
+        // From query-alerts args.scope.service
+        assert.ok(refs.services.includes('svc-api-gateway'));
+        // From query-metrics args.scope.service (universal extraction)
+        assert.ok(refs.services.includes('svc-notifications'));
     });
 
     await t.test('extracts ticket IDs', () => {
@@ -140,5 +183,95 @@ test('referenceBuilder', async (t) => {
         assert.strictEqual(refs.metrics.length, 1);
         assert.strictEqual(refs.metrics[0].expression.metricName, 'cpu_usage');
         assert.strictEqual(refs.metrics[0].start, '2024-01-01T00:00:00Z');
+    });
+    await t.test('extracts logs references with filters but no search', () => {
+        const results: ToolResult[] = [
+            {
+                name: 'query-logs',
+                result: { logs: [] },
+                arguments: {
+                    expression: {
+                        filters: [
+                            { field: 'service', operator: '=', value: 'svc-notifications' }
+                        ]
+                    },
+                    start: '2025-12-06T14:53:39Z',
+                    end: '2025-12-06T15:23:39Z',
+                    scope: { service: 'svc-notifications', environment: 'prod' }
+                }
+            }
+        ];
+
+        const refs = buildReferences(results);
+        assert.ok(refs, 'Should return references even without search string');
+        assert.ok(refs.logs, 'Should have logs references');
+        assert.strictEqual(refs.logs.length, 1);
+        assert.deepEqual(refs.logs[0].scope, { service: 'svc-notifications' });
+        assert.deepEqual(refs.logs[0].expression.filters, [{ field: 'service', operator: '=', value: 'svc-notifications' }]);
+    });
+
+    await t.test('extracts metric references with complex expression object', () => {
+        const results: ToolResult[] = [
+            {
+                name: 'query-metrics',
+                result: [],
+                arguments: {
+                    expression: {
+                        metricName: 'http_requests_total',
+                        filters: [{ label: 'status', operator: '=', value: '500' }]
+                    },
+                    start: '2025-12-06T15:08:03.584Z',
+                    scope: { service: 'svc-notifications' }
+                }
+            }
+        ];
+
+        const refs = buildReferences(results);
+        assert.ok(refs, 'Should return references');
+        assert.ok(refs.metrics, 'Should return metric references');
+        assert.strictEqual(refs.metrics[0].expression.metricName, 'http_requests_total');
+    });
+
+    await t.test('extracts metric references from result when expression missing from args', () => {
+        const results: ToolResult[] = [
+            {
+                name: 'query-metrics',
+                result: [
+                    { metricName: 'demo.series', values: [[1733517600, 100.5]] },
+                    { name: 'cpu_usage', values: [[1733517600, 45.2]] }
+                ],
+                arguments: {
+                    step: 60,
+                    start: '2025-12-06T19:00:00Z',
+                    end: '2025-12-06T20:00:00Z',
+                    scope: { service: 'svc-payments' }
+                }
+            }
+        ];
+
+        const refs = buildReferences(results);
+        assert.ok(refs, 'Should return references when extracting from result');
+        assert.ok(refs.metrics, 'Should have metrics references');
+        assert.strictEqual(refs.metrics.length, 2, 'Should extract both metrics from result');
+        assert.strictEqual(refs.metrics[0].expression.metricName, 'demo.series');
+        assert.strictEqual(refs.metrics[1].expression.metricName, 'cpu_usage');
+        assert.strictEqual(refs.metrics[0].start, '2025-12-06T19:00:00Z');
+        assert.deepEqual(refs.metrics[0].scope, { service: 'svc-payments' });
+    });
+
+    await t.test('ignores describe-metrics results for references', () => {
+        const results: ToolResult[] = [
+            {
+                name: 'describe-metrics',
+                result: [
+                    { name: 'cpu_usage' },
+                    { name: 'memory_usage' }
+                ],
+                arguments: { service: 'backend' }
+            }
+        ];
+
+        const refs = buildReferences(results);
+        assert.equal(refs, undefined, 'Should return undefined if only describe-metrics present');
     });
 });

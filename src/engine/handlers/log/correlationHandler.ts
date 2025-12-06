@@ -2,7 +2,7 @@
  * Log Correlation Handler
  *
  * Detects correlations between log events and other system events.
- * Extracted from CorrelationDetector class to follow handler-based architecture.
+ * Uses shared correlation utilities for consistent logic across all handlers.
  */
 
 import type { CorrelationHandler } from "../handlers.js";
@@ -13,52 +13,30 @@ import type {
   JsonObject,
 } from "../../../types.js";
 import { isValidTimestamp, normalizeTimestamp } from "../../timestampUtils.js";
-
-const MODERATE_CORRELATION_THRESHOLD = 0.5;
+import {
+  findCorrelations,
+  findIntraCorrelations,
+  sortByStrength,
+} from "../correlationUtils.js";
 
 /**
  * Log correlation handler that detects correlations involving log events
  */
 export const logCorrelationHandler: CorrelationHandler = async (
-  context,
+  _context,
   events,
 ): Promise<Correlation[]> => {
-  const correlations: Correlation[] = [];
-
   // Filter for log events and events that could correlate with logs
   const logEvents = events.filter((e) => e.source === "log");
   const otherEvents = events.filter((e) => e.source !== "log");
 
   // Find correlations between log events and other events
-  for (const logEvent of logEvents) {
-    for (const otherEvent of otherEvents) {
-      const correlation = calculateLogCorrelation(logEvent, otherEvent);
-      if (
-        correlation &&
-        correlation.strength >= MODERATE_CORRELATION_THRESHOLD
-      ) {
-        correlations.push(correlation);
-      }
-    }
-  }
+  const crossCorrelations = findCorrelations(logEvents, otherEvents);
 
   // Find correlations between log events themselves
-  for (let i = 0; i < logEvents.length; i++) {
-    for (let j = i + 1; j < logEvents.length; j++) {
-      const correlation = calculateLogCorrelation(logEvents[i], logEvents[j]);
-      if (
-        correlation &&
-        correlation.strength >= MODERATE_CORRELATION_THRESHOLD
-      ) {
-        correlations.push(correlation);
-      }
-    }
-  }
+  const intraCorrelations = findIntraCorrelations(logEvents);
 
-  // Sort by strength (strongest first)
-  correlations.sort((a, b) => b.strength - a.strength);
-
-  return correlations;
+  return sortByStrength([...crossCorrelations, ...intraCorrelations]);
 };
 
 /**
@@ -153,137 +131,6 @@ export function extractLogEvents(result: ToolResult): CorrelationEvent[] {
 }
 
 /**
- * Calculate correlation between two events, with special handling for log events
- */
-function calculateLogCorrelation(
-  event1: CorrelationEvent,
-  event2: CorrelationEvent,
-): Correlation | null {
-  const time1 = new Date(event1.timestamp).getTime();
-  const time2 = new Date(event2.timestamp).getTime();
-  const timeDelta = Math.abs(time2 - time1);
-
-  // Maximum time delta for correlation (5 minutes)
-  const maxTimeDelta = 5 * 60 * 1000;
-
-  if (timeDelta > maxTimeDelta) {
-    return null;
-  }
-
-  const strength = calculateCorrelationStrength(
-    event1,
-    event2,
-    timeDelta,
-    maxTimeDelta,
-  );
-
-  if (strength < MODERATE_CORRELATION_THRESHOLD) {
-    return null;
-  }
-
-  const description = generateCorrelationDescription(event1, event2, timeDelta);
-
-  return {
-    events: [event1, event2],
-    strength,
-    timeDeltaMs: timeDelta,
-    description,
-  };
-}
-
-/**
- * Calculate correlation strength between two events with log-specific logic
- */
-function calculateCorrelationStrength(
-  event1: CorrelationEvent,
-  event2: CorrelationEvent,
-  timeDelta: number,
-  maxTimeDelta: number,
-): number {
-  // Base strength on temporal proximity (closer = stronger)
-  const temporalStrength = 1 - timeDelta / maxTimeDelta;
-
-  // Boost strength for certain event type combinations involving logs
-  let typeBoost = 0;
-
-  // Error burst + metric spike = strong correlation
-  if (
-    (event1.type === "error_burst" && event2.type === "metric_spike") ||
-    (event1.type === "metric_spike" && event2.type === "error_burst")
-  ) {
-    typeBoost = 0.3;
-  }
-
-  // Error burst + severity change = strong correlation
-  if (
-    (event1.type === "error_burst" && event2.type === "severity_change") ||
-    (event1.type === "severity_change" && event2.type === "error_burst")
-  ) {
-    typeBoost = 0.3;
-  }
-
-  // Critical error + incident creation = strong correlation
-  if (
-    (event1.type === "critical_error" && event2.type === "incident_created") ||
-    (event1.type === "incident_created" && event2.type === "critical_error")
-  ) {
-    typeBoost = 0.35;
-  }
-
-  // Error burst + deploy = moderate correlation (deployment issues)
-  if (
-    (event1.type === "error_burst" && event2.type === "deploy") ||
-    (event1.type === "deploy" && event2.type === "error_burst")
-  ) {
-    typeBoost = 0.25;
-  }
-
-  // Multiple error bursts = moderate correlation (cascading failures)
-  if (event1.type === "error_burst" && event2.type === "error_burst") {
-    typeBoost = 0.2;
-  }
-
-  // Critical error + metric drop = moderate correlation (service degradation)
-  if (
-    (event1.type === "critical_error" && event2.type === "metric_drop") ||
-    (event1.type === "metric_drop" && event2.type === "critical_error")
-  ) {
-    typeBoost = 0.25;
-  }
-
-  // General log + incident/metric event = moderate correlation
-  if (
-    (event1.source === "log" && event2.source !== "log") ||
-    (event1.source !== "log" && event2.source === "log")
-  ) {
-    typeBoost = Math.max(typeBoost, 0.15);
-  }
-
-  return Math.min(1.0, temporalStrength + typeBoost);
-}
-
-/**
- * Generate human-readable correlation description
- */
-function generateCorrelationDescription(
-  event1: CorrelationEvent,
-  event2: CorrelationEvent,
-  timeDelta: number,
-): string {
-  const deltaSeconds = Math.round(timeDelta / 1000);
-  const deltaMinutes = Math.round(deltaSeconds / 60);
-
-  const timeStr =
-    deltaMinutes > 0
-      ? `${deltaMinutes} minute(s)`
-      : `${deltaSeconds} second(s)`;
-
-  return `${event1.type} followed by ${event2.type} within ${timeStr}`;
-}
-
-
-
-/**
  * Helper: Get time window for grouping
  */
 function getTimeWindow(timestamp: string, windowMs: number): string {
@@ -291,3 +138,4 @@ function getTimeWindow(timestamp: string, windowMs: number): string {
   const windowStart = Math.floor(time / windowMs) * windowMs;
   return new Date(windowStart).toISOString();
 }
+

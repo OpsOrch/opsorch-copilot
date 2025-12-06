@@ -33,4 +33,24 @@ test('alertIntentHandler', async (t) => {
         assert.equal(result.intent, 'unknown');
         assert.equal(result.confidence, 0.0);
     });
+
+    await t.test("skips query-alerts when alert context exists in history", async () => {
+        // Reuse context structure but inject history
+        const testContext: HandlerContext = {
+            ...context,
+            turnNumber: 1,
+            conversationHistory: [{
+                userMessage: 'check monitor-123',
+                timestamp: Date.now(),
+                entities: [{ type: 'alert', value: 'monitor-123', extractedAt: Date.now(), source: 'test' }]
+            }],
+            userQuestion: 'check monitor status'
+        };
+
+        const result = await alertIntentHandler(testContext);
+        assert.ok(!result.suggestedTools.includes('query-alerts'),
+            'should NOT suggest query-alerts when context exists');
+        assert.ok(result.reasoning.includes('alert context found'),
+            'reasoning should mention context');
+    });
 });

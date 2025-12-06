@@ -4,9 +4,36 @@ import { ScopeInferer } from "./scopeInferer.js";
 import { validateToolCall } from "./toolsSchema.js";
 import { validationRegistry, intentRegistry, queryBuilderRegistry } from "./capabilityRegistry.js";
 import { HandlerContext } from "../types.js";
+import { getToolKey } from "./toolKeyExtractor.js";
 
 export class PlanRefiner {
-  constructor(private scopeInferer: ScopeInferer) {
+  constructor(private scopeInferer: ScopeInferer) { }
+
+  /**
+   * Extract keys of already-executed tools from conversation history and current turn results.
+   * Used to skip re-suggesting tools that have already been executed.
+   */
+  private getExecutedToolKeys(
+    previousResults: ToolResult[],
+    conversationHistory: ConversationTurn[]
+  ): Set<string> {
+    const keys = new Set<string>();
+
+    // Add tools from current turn's previous results
+    for (const result of previousResults) {
+      keys.add(getToolKey(result.name, result.arguments));
+    }
+
+    // Add tools from conversation history
+    for (const turn of conversationHistory) {
+      if (turn.toolResults) {
+        for (const result of turn.toolResults) {
+          keys.add(getToolKey(result.name, result.arguments));
+        }
+      }
+    }
+
+    return keys;
   }
 
   async refineCalls(
@@ -72,45 +99,59 @@ export class PlanRefiner {
     // 1. Validate LLM Plan and strip null fields
     let augmented = await this.refineCalls(calls, tools);
 
+    // 2. Get already-executed tool keys to avoid re-suggesting
+    const executedKeys = this.getExecutedToolKeys(
+      previousResults || [],
+      conversationHistory
+    );
 
-    // 2. Explicit request checks (Missing Tools Heuristic) via Intent Registry
-    const context: HandlerContext = {
-      chatId: "plan-refinement",
-      turnNumber: conversationHistory.length,
-      conversationHistory,
-      toolResults: previousResults || [],
-      userQuestion: question,
-    };
+    // 3. Explicit request checks (Missing Tools Heuristic) via Intent Registry
+    // Only apply if no tools are currently planned (LLM returned empty)
+    // If the LLM has already planned tools, we defer to its judgment to avoid "hijacking" the plan
+    if (augmented.length === 0) {
+      const context: HandlerContext = {
+        chatId: "plan-refinement",
+        turnNumber: conversationHistory.length,
+        conversationHistory,
+        toolResults: previousResults || [],
+        userQuestion: question,
+      };
 
-    const intentResult = await intentRegistry.execute(context);
+      const intentResult = await intentRegistry.execute(context);
 
-    // Process suggested tools from intent
-    for (const suggestedTool of intentResult.suggestedTools) {
-      // If suggested tool is available in toolbox but NOT in current plan
-      if (
-        tools.some((t) => t.name === suggestedTool) &&
-        !augmented.some((c) => c.name === suggestedTool)
-      ) {
-        // Use QueryBuilder to generate arguments
-        const args = await queryBuilderRegistry.execute(
-          context,
-          suggestedTool,
-          question
-        );
+      // Process suggested tools from intent
+      for (const suggestedTool of intentResult.suggestedTools) {
+        // If suggested tool is available in toolbox but NOT in current plan
+        if (
+          tools.some((t) => t.name === suggestedTool) &&
+          !augmented.some((c) => c.name === suggestedTool)
+        ) {
+          // Use QueryBuilder to generate arguments
+          const args = await queryBuilderRegistry.execute(
+            context,
+            suggestedTool,
+            question
+          );
 
-        console.log('[PlanRefiner] QueryBuilder returned args for', suggestedTool, ':', args ? Object.keys(args).length : 0, 'keys');
+          console.log('[PlanRefiner] QueryBuilder returned args for', suggestedTool, ':', args ? Object.keys(args).length : 0, 'keys');
 
-        // Only add if we successfully built args
-        if (args && Object.keys(args).length > 0) {
-          augmented.push({
-            name: suggestedTool,
-            arguments: args
-          });
+          // Only add if we successfully built args AND tool wasn't already executed
+          if (args && Object.keys(args).length > 0) {
+            const key = getToolKey(suggestedTool, args);
+            if (executedKeys.has(key)) {
+              console.log('[PlanRefiner] Skipping', suggestedTool, '- already executed with same args');
+              continue;
+            }
+            augmented.push({
+              name: suggestedTool,
+              arguments: args
+            });
+          }
         }
       }
     }
 
-    // 3. Apply scope inference if available (using conversation history for context)
+    // 4. Apply scope inference if available (using conversation history for context)
     const scopeInference = await this.scopeInferer.inferScope(
       question,
       previousResults || [],

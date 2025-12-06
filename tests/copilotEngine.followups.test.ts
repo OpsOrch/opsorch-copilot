@@ -146,7 +146,30 @@ test('drills into incident timelines/logs/metrics when user asks for root cause'
         if (plannerCalls === 1) {
           return {
             content: 'plan',
-            toolCalls: [{ name: 'query-incidents', arguments: { limit: 1, severities: ['sev1'] } }],
+            toolCalls: [
+              { name: 'query-incidents', arguments: { limit: 1, severities: ['sev1'] } },
+              // Explicitly request metrics and logs as per user prompting "check cpu metrics",
+              // since heuristic injection is now disabled when LLM provides a plan.
+              {
+                name: 'query-metrics',
+                arguments: {
+                  start: '2024-01-01T00:00:00Z',
+                  end: '2024-01-01T01:00:00Z',
+                  step: 60,
+                  scope: { service: 'checkout' },
+                  expression: { metricName: 'cpu_usage' }
+                } as JsonObject
+              },
+              {
+                name: 'query-logs',
+                arguments: {
+                  start: '2024-01-01T00:00:00Z',
+                  end: '2024-01-01T01:00:00Z',
+                  scope: { service: 'checkout' },
+                  expression: { search: 'error' }
+                } as JsonObject
+              }
+            ],
             chatId: 'conv-root-cause',
           };
         }

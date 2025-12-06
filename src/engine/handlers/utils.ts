@@ -1,4 +1,5 @@
-import { Entity, JsonValue, TimeRange } from "../../types.js";
+import { Entity, JsonValue, TimeRange, HandlerContext, ToolResult, JsonObject } from "../../types.js";
+import { DEFAULT_STOP_WORDS } from "../constants.js";
 
 /**
  * Utility functions for handler implementations
@@ -81,60 +82,7 @@ export class HandlerUtils {
    * Useful for intent classification and query building
    */
   static extractKeywords(text: string, stopWords?: string[]): string[] {
-    const defaultStopWords = [
-      "the",
-      "a",
-      "an",
-      "and",
-      "or",
-      "but",
-      "in",
-      "on",
-      "at",
-      "to",
-      "for",
-      "of",
-      "with",
-      "by",
-      "is",
-      "are",
-      "was",
-      "were",
-      "be",
-      "been",
-      "being",
-      "have",
-      "has",
-      "had",
-      "do",
-      "does",
-      "did",
-      "will",
-      "would",
-      "could",
-      "should",
-      "may",
-      "might",
-      "can",
-      "this",
-      "that",
-      "these",
-      "those",
-      "i",
-      "you",
-      "he",
-      "she",
-      "it",
-      "we",
-      "they",
-      "me",
-      "him",
-      "her",
-      "us",
-      "them",
-    ];
-
-    const stopWordsSet = new Set(stopWords || defaultStopWords);
+    const stopWordsSet = new Set(stopWords || DEFAULT_STOP_WORDS);
 
     return text
       .toLowerCase()
@@ -498,5 +446,32 @@ export class HandlerUtils {
       }
       return null;
     }
+  }
+
+  /**
+   * Check if a tool call has already been made in the conversation history or current tool results
+   * Useful for preventing duplicate queries (e.g., query-logs, describe-metrics)
+   */
+  static isDuplicateToolCall(context: HandlerContext, toolName: string, serviceScope?: string): boolean {
+    const checkResult = (result: ToolResult) => {
+      if (result.name !== toolName) return false;
+
+      // If no service scope checking is needed matches if name matches.
+      if (!serviceScope) return true;
+
+      const args = result.arguments;
+      if (!args) return false;
+
+      const scope = args.scope as JsonObject | undefined;
+      return scope?.service === serviceScope;
+    };
+
+    // Check current turn results
+    if (context.toolResults.some(checkResult)) return true;
+
+    // Check conversation history
+    if (context.conversationHistory.some(turn => turn.toolResults?.some(checkResult))) return true;
+
+    return false;
   }
 }

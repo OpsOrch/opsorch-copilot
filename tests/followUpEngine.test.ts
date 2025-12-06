@@ -73,4 +73,34 @@ test('FollowUpEngine', async (t) => {
         assert.ok(Array.isArray(refined));
         assert.strictEqual(refined.length, 0);
     });
+
+    await t.test('deduplicates suggestions with similar timestamps (fuzzy matching)', async () => {
+        const results: ToolResult[] = [
+            {
+                name: 'query-incidents',
+                result: [
+                    {
+                        id: 'INC-123',
+                        service: 'payment-api',
+                        status: 'active',
+                        title: 'Payment timeout errors',
+                        createdAt: '2025-12-06T17:50:00.000Z',
+                    }
+                ],
+            },
+        ];
+
+        // Call twice with slightly different question context that might generate similar timestamps
+        const suggestions1 = await engine.applyFollowUps(results, 'test-chat', [], 'root cause analysis');
+
+        // All suggestions should be unique - no duplicates by tool+service
+        const toolServiceKeys = suggestions1.map(s => {
+            const scope = s.arguments?.scope as { service?: string } | undefined;
+            return `${s.name}:${scope?.service ?? 'none'}`;
+        });
+        const uniqueKeys = new Set(toolServiceKeys);
+
+        assert.strictEqual(toolServiceKeys.length, uniqueKeys.size, 'Should have no duplicate tool+service combinations');
+    });
 });
+

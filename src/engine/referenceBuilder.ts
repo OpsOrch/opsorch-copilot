@@ -82,17 +82,31 @@ export function buildReferences(
   for (const r of results) {
     const args = (r.arguments ?? {}) as JsonObject;
 
-    // Extract incident IDs from results
-    collectIncidentIds(r.result).forEach((id) => incidents.add(id));
+    // Extract services from scope for ALL tools (universal extraction)
+    if (
+      args.scope &&
+      typeof args.scope === "object" &&
+      !Array.isArray(args.scope)
+    ) {
+      const scopeService = (args.scope as JsonObject).service;
+      if (typeof scopeService === "string" && scopeService.trim()) {
+        services.add(scopeService.trim());
+      }
+    }
 
     // Get capability type for this tool
     const capabilityType = getCapabilityType(r.name);
     if (!capabilityType) continue;
 
+    // Skip discovery tools for references (they return metadata, not data)
+    if (r.name === "describe-metrics") continue;
+
     // Extract from arguments based on capability type
     if (capabilityType === "incident") {
       // MCP incidentQuerySchema: id is z.string().optional()
       if (args.id) incidents.add(String(args.id).trim());
+      // Extract incident IDs from results (only for incident tools, not alerts!)
+      collectIncidentIds(r.result).forEach((id) => incidents.add(id));
     }
 
     if (capabilityType === "service") {
@@ -138,7 +152,7 @@ export function buildReferences(
       // MCP alertQuerySchema: id is z.string().optional()
       if (args.id) alerts.add(String(args.id).trim());
 
-      // For query-alerts, extract alert IDs from the result
+      // For query-alerts, extract alert IDs and services from the result
       // Handle array result (query-alerts returns array directly)
       // MCP alertSchema: id is z.string()
       if (Array.isArray(r.result)) {
@@ -147,6 +161,28 @@ export function buildReferences(
             const alertObj = alert as JsonObject;
             if (typeof alertObj.id === "string" && alertObj.id.trim()) {
               alerts.add(alertObj.id.trim());
+            }
+            // Extract service from alert scope
+            if (alertObj.scope && typeof alertObj.scope === "object" && !Array.isArray(alertObj.scope)) {
+              const alertService = (alertObj.scope as JsonObject).service;
+              if (typeof alertService === "string" && alertService.trim()) {
+                services.add(alertService.trim());
+              }
+            }
+            // Extract services from alert fields
+            if (alertObj.fields && typeof alertObj.fields === "object" && !Array.isArray(alertObj.fields)) {
+              const fields = alertObj.fields as JsonObject;
+              if (typeof fields.service === "string" && fields.service.trim()) {
+                services.add(fields.service.trim());
+              }
+              // Extract affectedServices array
+              if (Array.isArray(fields.affectedServices)) {
+                fields.affectedServices.forEach((svc: JsonValue) => {
+                  if (typeof svc === "string" && svc.trim()) {
+                    services.add(svc.trim());
+                  }
+                });
+              }
             }
           }
         });
@@ -160,6 +196,27 @@ export function buildReferences(
               const alertObj = alert as JsonObject;
               if (typeof alertObj.id === "string" && alertObj.id.trim()) {
                 alerts.add(alertObj.id.trim());
+              }
+              // Extract service from alert scope
+              if (alertObj.scope && typeof alertObj.scope === "object" && !Array.isArray(alertObj.scope)) {
+                const alertService = (alertObj.scope as JsonObject).service;
+                if (typeof alertService === "string" && alertService.trim()) {
+                  services.add(alertService.trim());
+                }
+              }
+              // Extract services from alert fields
+              if (alertObj.fields && typeof alertObj.fields === "object" && !Array.isArray(alertObj.fields)) {
+                const fields = alertObj.fields as JsonObject;
+                if (typeof fields.service === "string" && fields.service.trim()) {
+                  services.add(fields.service.trim());
+                }
+                if (Array.isArray(fields.affectedServices)) {
+                  fields.affectedServices.forEach((svc: JsonValue) => {
+                    if (typeof svc === "string" && svc.trim()) {
+                      services.add(svc.trim());
+                    }
+                  });
+                }
               }
             }
           });
@@ -184,6 +241,19 @@ export function buildReferences(
         }
       }
 
+      // Extract metric scope info for reuse
+      let metricScope: { service: string } | undefined;
+      if (typeof args.service === "string" && args.service.trim()) {
+        metricScope = { service: args.service.trim() };
+      } else if (
+        args.scope &&
+        typeof args.scope === "object" &&
+        !Array.isArray(args.scope) &&
+        (args.scope as JsonObject).service
+      ) {
+        metricScope = { service: (args.scope as JsonObject).service as string };
+      }
+
       if (expression) {
         // Construct a simple MetricExpression from the string
         const metric: MetricReference = {
@@ -195,59 +265,93 @@ export function buildReferences(
           metric.end = args.end.trim();
         const step = normalizeMetricStep(args.step);
         if (step !== undefined) metric.step = step;
-        if (typeof args.service === "string" && args.service.trim())
-          metric.scope = { service: args.service.trim() };
-
-        // Handle object scope (MCP uses scope object)
-        if (
-          args.scope &&
-          typeof args.scope === "object" &&
-          !Array.isArray(args.scope) &&
-          (args.scope as JsonObject).service
-        ) {
-          metric.scope = metric.scope ?? {
-            service: (args.scope as JsonObject).service as string,
-          };
-        }
+        if (metricScope) metric.scope = metricScope;
 
         metrics.push(metric);
+      } else {
+        // No expression in args - try to extract metric names from result
+        // This handles cases where query-metrics is called without explicit expression
+        if (Array.isArray(r.result)) {
+          r.result.forEach((series: JsonValue) => {
+            if (series && typeof series === "object" && !Array.isArray(series)) {
+              const seriesObj = series as JsonObject;
+              // Check for metricName or name field in result
+              const name = seriesObj.metricName ?? seriesObj.name;
+              if (typeof name === "string" && name.trim()) {
+                const metric: MetricReference = {
+                  expression: { metricName: name.trim() },
+                };
+                if (typeof args.start === "string" && args.start.trim())
+                  metric.start = args.start.trim();
+                if (typeof args.end === "string" && args.end.trim())
+                  metric.end = args.end.trim();
+                const step = normalizeMetricStep(args.step);
+                if (step !== undefined) metric.step = step;
+                if (metricScope) metric.scope = metricScope;
+
+                metrics.push(metric);
+              }
+            }
+          });
+        }
       }
     }
 
-    if (capabilityType === "log") {
-      let query: string | undefined;
+    let query: string | undefined;
 
-      // MCP logQuerySchema: expression is object with search field
-      if (args.expression && typeof args.expression === "object" && !Array.isArray(args.expression)) {
-        const expr = args.expression as JsonObject;
-        // MCP logExpressionSchema: search is z.string().optional()
-        if (typeof expr.search === "string") query = expr.search;
+    // MCP logQuerySchema: expression is object with search field
+    if (args.expression && typeof args.expression === "object" && !Array.isArray(args.expression)) {
+      const expr = args.expression as JsonObject;
+      // MCP logExpressionSchema: search is z.string().optional()
+      if (typeof expr.search === "string") query = expr.search;
+
+      // If we have filters but no search string, use "Filtered Logs" or similar placeholder
+      // or just allow empty search. The Reference structure allows undefined search if we change types, 
+      // but let's check strict types. LogReference.expression.search is optional in types.ts?
+      // Let's check types again. 
+      // types.ts: export interface LogExpression { search?: string; ... }
+      // So we can create a LogReference without search string if filters exist.
+    }
+
+    // Check if we have enough to make a reference (search OR filters)
+    const hasSearch = typeof query === "string";
+    const exprObj = (args.expression as JsonObject) || {};
+    const hasFilters = Array.isArray(exprObj.filters) && exprObj.filters.length > 0;
+
+    if (hasSearch || hasFilters) {
+      // Construct a simple LogReference
+      const log: LogReference = {
+        expression: {},
+      };
+      if (hasSearch) log.expression.search = query;
+
+      // Copy filters if present
+      if (hasFilters) {
+        // We can blindly copy filters if structure matches, or leave emptiness.
+        // Ideally we copy them to be accurate.
+        // defined in types as: filters?: { field: string; operator: string; value: string }[];
+        // Let's copy them correctly.
+        log.expression.filters = exprObj.filters as { field: string; operator: string; value: string }[];
       }
 
-      if (query) {
-        // Construct a simple LogExpression from the string
-        const log: LogReference = {
-          expression: { search: query },
-        };
-        if (typeof args.start === "string" && args.start.trim())
-          log.start = args.start.trim();
-        if (typeof args.end === "string" && args.end.trim())
-          log.end = args.end.trim();
-        if (typeof args.service === "string" && args.service.trim())
-          log.scope = { service: args.service.trim() };
+      if (typeof args.start === "string" && args.start.trim())
+        log.start = args.start.trim();
+      if (typeof args.end === "string" && args.end.trim())
+        log.end = args.end.trim();
+      if (typeof args.service === "string" && args.service.trim())
+        log.scope = { service: args.service.trim() };
 
-        // Handle object scope (MCP uses scope object)
-        if (
-          args.scope &&
-          typeof args.scope === "object" &&
-          !Array.isArray(args.scope) &&
-          (args.scope as JsonObject).service
-        ) {
-          log.scope = log.scope ?? { service: (args.scope as JsonObject).service as string };
-        }
-
-        logs.push(log);
+      // Handle object scope (MCP uses scope object)
+      if (
+        args.scope &&
+        typeof args.scope === "object" &&
+        !Array.isArray(args.scope) &&
+        (args.scope as JsonObject).service
+      ) {
+        log.scope = log.scope ?? { service: (args.scope as JsonObject).service as string };
       }
+
+      logs.push(log);
     }
   }
 

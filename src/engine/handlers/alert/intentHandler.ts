@@ -55,10 +55,25 @@ export const alertIntentHandler: IntentHandler = async (
     reasoning += " - monitoring/detector context";
   }
 
+  // Check for alert context in recent history
+  const hasAlertContext = context.conversationHistory.slice(-3).some(
+    (turn) => turn.entities?.some((e) => e.type === "alert"),
+  );
+
+  const suggestedTools: string[] = [];
+  // Only suggest query-alerts if we don't have context OR if explicitly asked to list/show
+  if (!hasAlertContext || actionMatches.length > 0) {
+    suggestedTools.push("query-alerts");
+  }
+
+  if (hasAlertContext) {
+    reasoning += " - alert context found in history";
+  }
+
   return {
     intent: "observability",
     confidence,
-    suggestedTools: ["query-alerts"],
+    suggestedTools,
     reasoning,
   };
 };

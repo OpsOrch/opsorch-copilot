@@ -44,13 +44,15 @@ export const metricAnomalyHandler: AnomalyHandler = async (
  * Detect anomalies in a single metric series using statistical methods
  */
 function detectAnomaliesInSeries(series: MetricSeries): Anomaly[] {
-  const anomalies: Anomaly[] = [];
-
   if (series.values.length < 3) {
-    return anomalies;
+    return [];
   }
 
   const stats = calculateStatistics(series.values);
+
+  // Use a map to deduplicate anomalies at the same timestamp
+  // Prefer spike/drop over outlier when both occur at the same point
+  const anomalyMap = new Map<string, Anomaly>();
 
   for (let i = 0; i < series.values.length; i++) {
     const value = series.values[i];
@@ -59,12 +61,53 @@ function detectAnomaliesInSeries(series: MetricSeries): Anomaly[] {
     if (!timestamp) continue;
 
     const deviationFromMean = Math.abs(value - stats.mean);
-    const isOutlier = deviationFromMean > OUTLIER_THRESHOLD * stats.stdDev;
+    const isOutlier = stats.stdDev > 0 && deviationFromMean > OUTLIER_THRESHOLD * stats.stdDev;
 
-    if (isOutlier) {
+    // Check for spike/drop first (more specific than outlier)
+    let foundSpikeOrDrop = false;
+
+    if (i > 0) {
+      const prevValue = series.values[i - 1];
+
+      // Guard against division by zero
+      if (Math.abs(prevValue) > Number.EPSILON) {
+        const changeRatio = Math.abs(value - prevValue) / Math.abs(prevValue);
+
+        if (changeRatio > SPIKE_THRESHOLD && value > prevValue) {
+          const severity =
+            changeRatio > 1.0 ? "high" : changeRatio > 0.8 ? "medium" : "low";
+
+          anomalyMap.set(timestamp, {
+            timestamp,
+            value,
+            type: "spike",
+            severity,
+            deviationFromMean,
+            metric: series.expression,
+          });
+          foundSpikeOrDrop = true;
+        } else if (changeRatio > DROP_THRESHOLD && value < prevValue) {
+          const severity =
+            changeRatio > 1.0 ? "high" : changeRatio > 0.8 ? "medium" : "low";
+
+          anomalyMap.set(timestamp, {
+            timestamp,
+            value,
+            type: "drop",
+            severity,
+            deviationFromMean,
+            metric: series.expression,
+          });
+          foundSpikeOrDrop = true;
+        }
+      }
+    }
+
+    // Only add outlier if we didn't already add a spike/drop for this timestamp
+    if (isOutlier && !foundSpikeOrDrop && !anomalyMap.has(timestamp)) {
       const severity = calculateSeverity(deviationFromMean, stats.stdDev);
 
-      anomalies.push({
+      anomalyMap.set(timestamp, {
         timestamp,
         value,
         type: "outlier",
@@ -73,40 +116,9 @@ function detectAnomaliesInSeries(series: MetricSeries): Anomaly[] {
         metric: series.expression,
       });
     }
-
-    if (i > 0) {
-      const prevValue = series.values[i - 1];
-      const changeRatio = Math.abs(value - prevValue) / Math.abs(prevValue);
-
-      if (changeRatio > SPIKE_THRESHOLD && value > prevValue) {
-        const severity =
-          changeRatio > 1.0 ? "high" : changeRatio > 0.8 ? "medium" : "low";
-
-        anomalies.push({
-          timestamp,
-          value,
-          type: "spike",
-          severity,
-          deviationFromMean,
-          metric: series.expression,
-        });
-      } else if (changeRatio > DROP_THRESHOLD && value < prevValue) {
-        const severity =
-          changeRatio > 1.0 ? "high" : changeRatio > 0.8 ? "medium" : "low";
-
-        anomalies.push({
-          timestamp,
-          value,
-          type: "drop",
-          severity,
-          deviationFromMean,
-          metric: series.expression,
-        });
-      }
-    }
   }
 
-  return anomalies;
+  return Array.from(anomalyMap.values());
 }
 
 /**
