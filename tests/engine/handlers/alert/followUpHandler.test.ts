@@ -223,5 +223,114 @@ test('alertFollowUpHandler', async (t) => {
         const hasLogs = suggestions.some(s => s.name === 'query-logs');
         assert.equal(hasLogs, false, 'Should deduplicate query-logs against history');
     });
+
+    await t.test('should suggest deployments for high-severity alerts (critical)', async () => {
+        const result: ToolResult = {
+            name: 'query-alerts',
+            result: [
+                { id: '20', status: 'firing', service: 'svc-critical', severity: 'critical' },
+            ],
+        };
+        const suggestions = await alertFollowUpHandler(context, result);
+
+        const deploymentsSuggestion = suggestions.find(s => s.name === 'query-deployments');
+        assert.ok(deploymentsSuggestion, 'should suggest query-deployments for critical alerts');
+        const args = deploymentsSuggestion.arguments as { scope: { service: string }, limit: number };
+        assert.equal(args.scope.service, 'svc-critical');
+        assert.equal(args.limit, 5);
+    });
+
+    await t.test('should suggest deployments for high-severity alerts (sev1)', async () => {
+        const result: ToolResult = {
+            name: 'query-alerts',
+            result: [
+                { id: '21', status: 'active', service: 'svc-prod', severity: 'sev1' },
+            ],
+        };
+        const suggestions = await alertFollowUpHandler(context, result);
+
+        const deploymentsSuggestion = suggestions.find(s => s.name === 'query-deployments');
+        assert.ok(deploymentsSuggestion, 'should suggest query-deployments for sev1 alerts');
+    });
+
+    await t.test('should suggest deployments for latency-related alert names', async () => {
+        const result: ToolResult = {
+            name: 'query-alerts',
+            result: [
+                { id: '22', status: 'firing', service: 'svc-api', severity: 'warning', name: 'High Latency Alert' },
+            ],
+        };
+        const suggestions = await alertFollowUpHandler(context, result);
+
+        const deploymentsSuggestion = suggestions.find(s => s.name === 'query-deployments');
+        assert.ok(deploymentsSuggestion, 'should suggest query-deployments for latency alerts');
+        const args = deploymentsSuggestion.arguments as { scope: { service: string } };
+        assert.equal(args.scope.service, 'svc-api');
+    });
+
+    await t.test('should suggest deployments for timeout-related alert names', async () => {
+        const result: ToolResult = {
+            name: 'query-alerts',
+            result: [
+                { id: '23', status: 'active', service: 'svc-gateway', severity: 'warning', name: 'Request Timeout Rate' },
+            ],
+        };
+        const suggestions = await alertFollowUpHandler(context, result);
+
+        const deploymentsSuggestion = suggestions.find(s => s.name === 'query-deployments');
+        assert.ok(deploymentsSuggestion, 'should suggest query-deployments for timeout alerts');
+    });
+
+    await t.test('should suggest deployments when query contains latency context', async () => {
+        const contextWithLatency: HandlerContext = {
+            ...context,
+            userQuestion: 'check alerts for slow response times'
+        };
+        const result: ToolResult = {
+            name: 'query-alerts',
+            result: [
+                { id: '24', status: 'active', service: 'svc-web', severity: 'warning' },
+            ],
+            arguments: { query: 'slow' }
+        };
+        const suggestions = await alertFollowUpHandler(contextWithLatency, result);
+
+        const deploymentsSuggestion = suggestions.find(s => s.name === 'query-deployments');
+        assert.ok(deploymentsSuggestion, 'should suggest query-deployments when query has latency context');
+    });
+
+    await t.test('should NOT suggest deployments for low-severity non-latency alerts', async () => {
+        const result: ToolResult = {
+            name: 'query-alerts',
+            result: [
+                { id: '25', status: 'active', service: 'svc-misc', severity: 'info', name: 'Disk Usage Alert' },
+            ],
+        };
+        const suggestions = await alertFollowUpHandler(context, result);
+
+        const deploymentsSuggestion = suggestions.find(s => s.name === 'query-deployments');
+        assert.ok(!deploymentsSuggestion, 'should NOT suggest query-deployments for low-severity non-latency alerts');
+    });
+
+    await t.test('should NOT duplicate deployment suggestions if already called', async () => {
+        const contextWithExisting: HandlerContext = {
+            ...context,
+            toolResults: [{
+                name: 'query-deployments',
+                result: [],
+                arguments: { scope: { service: 'svc-dup' } }
+            }]
+        };
+        const result: ToolResult = {
+            name: 'query-alerts',
+            result: [
+                { id: '26', status: 'firing', service: 'svc-dup', severity: 'critical' },
+            ],
+        };
+        const suggestions = await alertFollowUpHandler(contextWithExisting, result);
+
+        const deploymentsSuggestion = suggestions.find(s => s.name === 'query-deployments');
+        assert.ok(!deploymentsSuggestion, 'should NOT duplicate query-deployments');
+    });
 });
 

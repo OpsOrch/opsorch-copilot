@@ -207,7 +207,7 @@ function parseLLMResponse(response: string): Partial<CopilotAnswer> {
 
 /**
  * Parse references returned by the LLM into CopilotReferences format.
- * The LLM returns simple string arrays for incidents, services, alerts, tickets.
+ * The LLM returns simple string arrays for incidents, services, alerts, tickets, deployments.
  */
 function parseReferencesFromLlm(refs: Record<string, unknown>): CopilotReferences {
   const result: CopilotReferences = {};
@@ -223,6 +223,9 @@ function parseReferencesFromLlm(refs: Record<string, unknown>): CopilotReference
   }
   if (Array.isArray(refs.alerts)) {
     result.alerts = refs.alerts.filter((a): a is string => typeof a === 'string');
+  }
+  if (Array.isArray(refs.deployments)) {
+    result.deployments = refs.deployments.filter((d): d is string => typeof d === 'string');
   }
 
   return result;
@@ -247,6 +250,7 @@ function mergeReferences(
   const validServices = new Set(staticRefs.services || []);
   const validTickets = new Set(staticRefs.tickets || []);
   const validAlerts = new Set(staticRefs.alerts || []);
+  const validDeployments = new Set(staticRefs.deployments || []);
 
   // Filter LLM refs to only include values that exist in static refs
   // This prevents the LLM from inventing service names or IDs
@@ -254,6 +258,7 @@ function mergeReferences(
   const filteredLlmServices = llmRefs.services?.filter(s => validServices.has(s)) || [];
   const filteredLlmTickets = llmRefs.tickets?.filter(t => validTickets.has(t)) || [];
   const filteredLlmAlerts = llmRefs.alerts?.filter(a => validAlerts.has(a)) || [];
+  const filteredLlmDeployments = llmRefs.deployments?.filter(d => validDeployments.has(d)) || [];
 
   // Use filtered LLM refs if they have values, otherwise fall back to static
   const merged: CopilotReferences = {
@@ -261,6 +266,7 @@ function mergeReferences(
     services: filteredLlmServices.length ? filteredLlmServices : staticRefs.services,
     tickets: filteredLlmTickets.length ? filteredLlmTickets : staticRefs.tickets,
     alerts: filteredLlmAlerts.length ? filteredLlmAlerts : staticRefs.alerts,
+    deployments: filteredLlmDeployments.length ? filteredLlmDeployments : staticRefs.deployments,
     // Always use static refs for complex types (they have rich query metadata for deep-linking)
     metrics: staticRefs.metrics,
     logs: staticRefs.logs,
@@ -271,6 +277,7 @@ function mergeReferences(
   if (merged.services && merged.services.length === 0) delete merged.services;
   if (merged.tickets && merged.tickets.length === 0) delete merged.tickets;
   if (merged.alerts && merged.alerts.length === 0) delete merged.alerts;
+  if (merged.deployments && merged.deployments.length === 0) delete merged.deployments;
   if (merged.metrics && merged.metrics.length === 0) delete merged.metrics;
   if (merged.logs && merged.logs.length === 0) delete merged.logs;
 

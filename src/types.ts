@@ -56,6 +56,7 @@ export type CopilotReferences = {
   logs?: LogReference[]; // log scopes + windows
   tickets?: string[]; // ticket IDs
   alerts?: string[]; // alert IDs
+  deployments?: string[]; // deployment IDs
 };
 
 export type MetricReference = {
@@ -121,7 +122,7 @@ export type ConversationConfig = {
 
 // EntityExtractor types
 export interface Entity {
-  type: "incident" | "service" | "timestamp" | "ticket" | "alert" | "metric";
+  type: "incident" | "service" | "timestamp" | "ticket" | "alert" | "metric" | "deployment";
   value: string;
   extractedAt: number;
   source: string;

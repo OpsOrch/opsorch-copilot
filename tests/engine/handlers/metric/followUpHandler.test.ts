@@ -79,4 +79,112 @@ test('metricFollowUpHandler', async (t) => {
         // cpu_usage -> cpu (expanded) AND usage
         assert.ok(logsArgs.expression.search.includes('cpu'), 'Search should include cpu');
     });
+
+    await t.test('should suggest deployments for http_request_duration metrics', async () => {
+        const result: ToolResult = {
+            name: 'query-metrics',
+            result: [{
+                name: 'http_request_duration_seconds',
+                service: 'svc-api',
+                points: []
+            }],
+        };
+
+        const suggestions = await metricFollowUpHandler(baseContext, result);
+
+        const deploymentsSuggestion = suggestions.find(s => s.name === 'query-deployments');
+        assert.ok(deploymentsSuggestion, 'should suggest query-deployments for http_request metrics');
+        const args = deploymentsSuggestion.arguments as { scope: { service: string }, limit: number };
+        assert.equal(args.scope.service, 'svc-api');
+        assert.equal(args.limit, 5);
+    });
+
+    await t.test('should suggest deployments for p95/p99 latency metrics', async () => {
+        const result: ToolResult = {
+            name: 'query-metrics',
+            result: [{
+                name: 'api_latency_p95',
+                service: 'svc-gateway',
+                points: []
+            }],
+        };
+
+        const suggestions = await metricFollowUpHandler(baseContext, result);
+
+        const deploymentsSuggestion = suggestions.find(s => s.name === 'query-deployments');
+        assert.ok(deploymentsSuggestion, 'should suggest query-deployments for p95 metrics');
+    });
+
+    await t.test('should suggest deployments for response_time metrics', async () => {
+        const result: ToolResult = {
+            name: 'query-metrics',
+            result: [{
+                name: 'response_time_seconds',
+                service: 'svc-web',
+                points: []
+            }],
+        };
+
+        const suggestions = await metricFollowUpHandler(baseContext, result);
+
+        const deploymentsSuggestion = suggestions.find(s => s.name === 'query-deployments');
+        assert.ok(deploymentsSuggestion, 'should suggest query-deployments for response_time metrics');
+    });
+
+    await t.test('should suggest deployments for grpc latency metrics', async () => {
+        const result: ToolResult = {
+            name: 'query-metrics',
+            result: [{
+                name: 'grpc_server_handling_seconds',
+                service: 'svc-grpc',
+                points: []
+            }],
+        };
+
+        const suggestions = await metricFollowUpHandler(baseContext, result);
+
+        const deploymentsSuggestion = suggestions.find(s => s.name === 'query-deployments');
+        assert.ok(deploymentsSuggestion, 'should suggest query-deployments for grpc metrics');
+    });
+
+    await t.test('should NOT suggest deployments for non-latency metrics', async () => {
+        const result: ToolResult = {
+            name: 'query-metrics',
+            result: [{
+                name: 'memory_usage_bytes',
+                service: 'svc-node',
+                points: []
+            }],
+        };
+
+        const suggestions = await metricFollowUpHandler(baseContext, result);
+
+        const deploymentsSuggestion = suggestions.find(s => s.name === 'query-deployments');
+        assert.ok(!deploymentsSuggestion, 'should NOT suggest query-deployments for non-latency metrics');
+    });
+
+    await t.test('should NOT duplicate deployment suggestions for same service', async () => {
+        const contextWithExisting: HandlerContext = {
+            ...baseContext,
+            toolResults: [{
+                name: 'query-deployments',
+                result: [],
+                arguments: { scope: { service: 'svc-dup' } }
+            }]
+        };
+        const result: ToolResult = {
+            name: 'query-metrics',
+            result: [{
+                name: 'http_request_duration_seconds',
+                service: 'svc-dup',
+                points: []
+            }],
+        };
+
+        const suggestions = await metricFollowUpHandler(contextWithExisting, result);
+
+        const deploymentsSuggestion = suggestions.find(s => s.name === 'query-deployments');
+        assert.ok(!deploymentsSuggestion, 'should NOT duplicate query-deployments');
+    });
 });
+

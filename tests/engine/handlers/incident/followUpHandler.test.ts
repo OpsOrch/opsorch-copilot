@@ -41,8 +41,8 @@ test('incidentFollowUpHandler', async (t) => {
 
         const suggestions = await incidentFollowUpHandler(context, result);
 
-        // Should have: timeline, describe-metrics, query-logs, query-alerts
-        assert.equal(suggestions.length, 4);
+        // Should have: timeline, describe-metrics, query-logs, query-alerts, query-deployments
+        assert.equal(suggestions.length, 5);
 
         const timelineSuggestion = suggestions.find(s => s.name === 'get-incident-timeline');
         assert.ok(timelineSuggestion);
@@ -67,6 +67,14 @@ test('incidentFollowUpHandler', async (t) => {
         const alertsArgs = alertsSuggestion.arguments as { scope: { service: string }, statuses: string[] };
         assert.equal(alertsArgs.scope.service, 'svc-payments');
         assert.deepEqual(alertsArgs.statuses, ['firing', 'acknowledged']);
+
+        // New: should suggest query-deployments for the service
+        const deploymentsSuggestion = suggestions.find(s => s.name === 'query-deployments');
+        assert.ok(deploymentsSuggestion, 'should suggest query-deployments for root cause analysis');
+        const deploymentsArgs = deploymentsSuggestion.arguments as { scope: { service: string }, statuses: string[], limit: number };
+        assert.equal(deploymentsArgs.scope.service, 'svc-payments');
+        assert.deepEqual(deploymentsArgs.statuses, ['success']);
+        assert.equal(deploymentsArgs.limit, 3);
     });
 
     await t.test('should suggest timeline for drill-down patterns', async () => {
@@ -301,6 +309,153 @@ test('incidentFollowUpHandler', async (t) => {
         const hasMetrics = suggestions.some(s => s.name === 'describe-metrics');
         assert.equal(hasMetrics, false, 'Should deduplicate describe-metrics against history');
     });
+
+    await t.test('should suggest deployments when latency priority term is mentioned', async () => {
+        const context: HandlerContext = {
+            ...baseContext,
+            userQuestion: 'what is causing the latency issues?',
+        };
+        const result: ToolResult = {
+            name: 'query-incidents',
+            result: [{
+                id: 'inc-latency-001',
+                title: 'API latency spike',
+                status: 'open',
+                severity: 'sev3',
+                service: 'svc-api',
+            }],
+        };
+
+        const suggestions = await incidentFollowUpHandler(context, result);
+
+        const deploymentsSuggestion = suggestions.find(s => s.name === 'query-deployments');
+        assert.ok(deploymentsSuggestion, 'should suggest query-deployments for latency issues');
+        const args = deploymentsSuggestion.arguments as { scope: { service: string }, limit: number };
+        assert.equal(args.scope.service, 'svc-api');
+        assert.equal(args.limit, 5);
+    });
+
+    await t.test('should suggest deployments when timeout priority term is mentioned', async () => {
+        const context: HandlerContext = {
+            ...baseContext,
+            userQuestion: 'why are there timeout errors?',
+        };
+        const result: ToolResult = {
+            name: 'query-incidents',
+            result: [{
+                id: 'inc-timeout-001',
+                title: 'Request timeouts',
+                status: 'open',
+                severity: 'sev2',
+                service: 'svc-gateway',
+            }],
+        };
+
+        const suggestions = await incidentFollowUpHandler(context, result);
+
+        const deploymentsSuggestion = suggestions.find(s => s.name === 'query-deployments');
+        assert.ok(deploymentsSuggestion, 'should suggest query-deployments for timeout issues');
+        const args = deploymentsSuggestion.arguments as { scope: { service: string }, limit: number };
+        assert.equal(args.scope.service, 'svc-gateway');
+    });
+
+    await t.test('should suggest deployments for high-severity incidents (sev1)', async () => {
+        const context: HandlerContext = {
+            ...baseContext,
+            userQuestion: 'show me the incident', // No priority terms or root cause keywords
+        };
+        const result: ToolResult = {
+            name: 'query-incidents',
+            result: [{
+                id: 'inc-sev1-001',
+                title: 'Production outage',
+                status: 'open',
+                severity: 'sev1',
+                service: 'svc-critical',
+                createdAt: '2025-01-01T10:00:00Z',
+            }],
+        };
+
+        const suggestions = await incidentFollowUpHandler(context, result);
+
+        const deploymentsSuggestion = suggestions.find(s => s.name === 'query-deployments');
+        assert.ok(deploymentsSuggestion, 'should suggest query-deployments for sev1 incidents');
+        const args = deploymentsSuggestion.arguments as { scope: { service: string } };
+        assert.equal(args.scope.service, 'svc-critical');
+    });
+
+    await t.test('should suggest deployments for high-severity incidents (critical)', async () => {
+        const context: HandlerContext = {
+            ...baseContext,
+            userQuestion: 'what happened?',
+        };
+        const result: ToolResult = {
+            name: 'query-incidents',
+            result: [{
+                id: 'inc-critical-001',
+                title: 'System failure',
+                status: 'open',
+                severity: 'critical',
+                service: 'svc-core',
+            }],
+        };
+
+        const suggestions = await incidentFollowUpHandler(context, result);
+
+        const deploymentsSuggestion = suggestions.find(s => s.name === 'query-deployments');
+        assert.ok(deploymentsSuggestion, 'should suggest query-deployments for critical incidents');
+    });
+
+    await t.test('should NOT suggest deployments for low-severity incidents without priority terms', async () => {
+        const context: HandlerContext = {
+            ...baseContext,
+            userQuestion: 'show recent incidents', // No priority terms, root cause, or high severity
+        };
+        const result: ToolResult = {
+            name: 'query-incidents',
+            result: [{
+                id: 'inc-low-001',
+                title: 'Minor logging issue',
+                status: 'open',
+                severity: 'sev4',
+                service: 'svc-logging',
+            }],
+        };
+
+        const suggestions = await incidentFollowUpHandler(context, result);
+
+        // Should NOT have deployment suggestion for low severity without keywords
+        const deploymentsSuggestion = suggestions.find(s => s.name === 'query-deployments');
+        assert.ok(!deploymentsSuggestion, 'should NOT suggest query-deployments for low-severity incidents without priority terms');
+    });
+
+    await t.test('should NOT duplicate deployment suggestions if already called', async () => {
+        const context: HandlerContext = {
+            ...baseContext,
+            userQuestion: 'latency issues',
+            toolResults: [{
+                name: 'query-deployments',
+                result: [],
+                arguments: { scope: { service: 'svc-api' } }
+            }]
+        };
+        const result: ToolResult = {
+            name: 'query-incidents',
+            result: [{
+                id: 'inc-dup-001',
+                title: 'Latency spike',
+                status: 'open',
+                severity: 'sev1',
+                service: 'svc-api',
+            }],
+        };
+
+        const suggestions = await incidentFollowUpHandler(context, result);
+
+        const deploymentsSuggestions = suggestions.filter(s => s.name === 'query-deployments');
+        assert.equal(deploymentsSuggestions.length, 0, 'should NOT duplicate query-deployments');
+    });
 });
+
 
 

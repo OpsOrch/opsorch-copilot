@@ -49,7 +49,13 @@ function extractScopeFromIncidentResult(result: ToolResult): QueryScope | null {
     if (Array.isArray(result.result)) {
       incidents = result.result as JsonObject[];
     } else {
-      incidents = [result.result as JsonObject];
+      const resultObj = result.result as JsonObject;
+      // Check if result has an 'incidents' property (common for query-incidents)
+      if (Array.isArray(resultObj.incidents)) {
+        incidents = resultObj.incidents as JsonObject[];
+      } else {
+        incidents = [resultObj];
+      }
     }
 
     // Extract scope from incidents

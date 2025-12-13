@@ -94,6 +94,36 @@ export const alertFollowUpHandler: FollowUpHandler = async (
           },
         });
       }
+
+      // Check for high-severity or latency-related alerts - suggest deployments
+      const alertSeverity = alert.severity;
+      const alertName = alert.name;
+      const isHighSeverity =
+        typeof alertSeverity === "string" &&
+        (alertSeverity.toLowerCase() === "critical" ||
+          alertSeverity.toLowerCase() === "error" ||
+          alertSeverity.toLowerCase().includes("sev1") ||
+          alertSeverity.toLowerCase().includes("sev2"));
+      const isLatencyRelated =
+        (typeof alertName === "string" &&
+          (alertName.toLowerCase().includes("latency") ||
+            alertName.toLowerCase().includes("timeout") ||
+            alertName.toLowerCase().includes("slow") ||
+            alertName.toLowerCase().includes("response"))) ||
+        (typeof originalQuery === "string" &&
+          (originalQuery.toLowerCase().includes("latency") ||
+            originalQuery.toLowerCase().includes("slow")));
+
+      if ((isHighSeverity || isLatencyRelated) &&
+        !HandlerUtils.isDuplicateToolCall(_context, "query-deployments", service)) {
+        suggestions.push({
+          name: "query-deployments",
+          arguments: {
+            scope: { service },
+            limit: 5,
+          },
+        });
+      }
     }
   }
 

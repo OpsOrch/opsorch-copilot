@@ -35,15 +35,27 @@ export class ScopeInferer {
       userQuestion: question,
     };
 
-    // Try to infer from capability handlers first
-    const capabilityScope = await this.inferFromCapabilityHandlers(context);
-    if (capabilityScope) {
-      return {
-        scope: capabilityScope,
-        confidence: 0.8, // High confidence for capability-based inference
-        source: "previous_query",
-        reason: "Inferred from capability handlers",
-      };
+    // Try to infer from capability handlers first (only if we have tool results or conversation history)
+    const hasToolResults = results.length > 0;
+    const hasHistoryWithTools = conversationHistory.some(turn => 
+      turn.toolResults && turn.toolResults.length > 0
+    );
+    
+    if (hasToolResults || hasHistoryWithTools) {
+      const capabilityScope = await this.inferFromCapabilityHandlers(context);
+      if (capabilityScope) {
+        // Check if scope came from query-incidents results to set appropriate source
+        const hasQueryIncidentResults = results.some(r => r.name === "query-incidents");
+        const confidence = hasQueryIncidentResults ? 0.85 : 0.8;
+        const source = hasQueryIncidentResults ? "incident" : "previous_query";
+        
+        return {
+          scope: capabilityScope,
+          confidence,
+          source,
+          reason: "Inferred from capability handlers",
+        };
+      }
     }
 
     // Fall back to legacy inference methods

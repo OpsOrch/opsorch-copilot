@@ -20,6 +20,7 @@ import {
   metricIntentHandler,
   serviceIntentHandler,
   ticketIntentHandler,
+  deploymentIntentHandler,
   // Entity handlers
   incidentEntityHandler,
   alertEntityHandler,
@@ -27,6 +28,7 @@ import {
   metricEntityHandler,
   serviceEntityHandler,
   ticketEntityHandler,
+  deploymentEntityHandler,
   // Follow-up handlers
   incidentFollowUpHandler,
   alertFollowUpHandler,
@@ -34,6 +36,7 @@ import {
   metricFollowUpHandler,
   serviceFollowUpHandler,
   ticketFollowUpHandler,
+  deploymentFollowUpHandler,
   // Reference handlers
   incidentReferenceHandler,
   serviceReferenceHandler,
@@ -46,6 +49,7 @@ import {
   metricValidationHandler,
   serviceValidationHandler,
   ticketValidationHandler,
+  deploymentValidationHandler,
   // Scope inference handlers
   incidentScopeInferenceHandler,
   alertScopeInferenceHandler,
@@ -53,6 +57,7 @@ import {
   metricScopeInferenceHandler,
   serviceScopeInferenceHandler,
   ticketScopeInferenceHandler,
+  deploymentScopeHandler,
   // New handlers
   metricAnomalyHandler,
   metricCorrelationHandler,
@@ -67,6 +72,7 @@ import {
   incidentQueryBuilder,
   ticketQueryBuilder,
   serviceQueryBuilder,
+  deploymentQueryBuilder,
 } from "./handlers/index.js";
 
 /**
@@ -83,8 +89,9 @@ function createIntentRegistry(): IntentRegistry {
   registry.register(alertIntentHandler);
   registry.register(ticketIntentHandler);
   registry.register(serviceIntentHandler);
+  registry.register(deploymentIntentHandler);
 
-  console.log("[IntentRegistry] Registered 6 capability intent handlers");
+  console.log("[IntentRegistry] Registered 7 capability intent handlers");
 
   return registry;
 }
@@ -112,8 +119,11 @@ function createEntityRegistry(): EntityRegistry {
   registry.register("query-tickets", ticketEntityHandler);
   registry.register("get-ticket", ticketEntityHandler);
 
+  registry.register("query-deployments", deploymentEntityHandler);
+  registry.register("get-deployment", deploymentEntityHandler);
+
   console.log(
-    "[EntityRegistry] Registered 11 entity handlers for 6 capabilities",
+    "[EntityRegistry] Registered 12 entity handlers for 7 capabilities",
   );
 
   return registry;
@@ -141,9 +151,11 @@ function createFollowUpRegistry(): FollowUpRegistry {
 
   registry.register("query-tickets", ticketFollowUpHandler);
   registry.register("get-ticket", ticketFollowUpHandler);
+  registry.register("query-deployments", deploymentFollowUpHandler);
+  registry.register("get-deployment", deploymentFollowUpHandler);
 
   console.log(
-    "[FollowUpRegistry] Registered 11 follow-up handlers for 6 capabilities",
+    "[FollowUpRegistry] Registered 12 follow-up handlers for 7 capabilities",
   );
 
   return registry;
@@ -191,9 +203,11 @@ function createValidationRegistry(): ValidationRegistry {
 
   registry.register("query-tickets", ticketValidationHandler);
   registry.register("get-ticket", ticketValidationHandler);
+  registry.register("query-deployments", deploymentValidationHandler);
+  registry.register("get-deployment", deploymentValidationHandler);
 
   console.log(
-    "[ValidationRegistry] Registered 11 validation handlers for 6 capabilities",
+    "[ValidationRegistry] Registered 12 validation handlers for 7 capabilities",
   );
 
   return registry;
@@ -212,9 +226,10 @@ function createScopeInferenceRegistry(): ScopeInferenceRegistry {
   registry.register("log", logScopeInferenceHandler);
   registry.register("metric", metricScopeInferenceHandler);
   registry.register("ticket", ticketScopeInferenceHandler);
+  registry.register("deployment", deploymentScopeHandler);
 
   console.log(
-    "[ScopeInferenceRegistry] Registered 6 scope inference handlers for 6 capabilities",
+    "[ScopeInferenceRegistry] Registered 7 scope inference handlers for 7 capabilities",
   );
 
   return registry;
@@ -303,9 +318,10 @@ function createQueryBuilderRegistry(): QueryBuilderRegistry {
   registry.register("query-incidents", incidentQueryBuilder);
   registry.register("query-tickets", ticketQueryBuilder);
   registry.register("query-services", serviceQueryBuilder);
+  registry.register("query-deployments", deploymentQueryBuilder);
 
   console.log(
-    "[QueryBuilderRegistry] Registered 6 query builder handlers",
+    "[QueryBuilderRegistry] Registered 7 query builder handlers",
   );
 
   return registry;

@@ -176,6 +176,39 @@ export const incidentFollowUpHandler: FollowUpHandler = async (
               ...(originalQuery && { query: originalQuery }),
             },
           });
+
+          // Suggest recent deployments for the service to check for correlation
+          suggestions.push({
+            name: "query-deployments",
+            arguments: {
+              scope: { service },
+              statuses: ["success"],
+              limit: 3,
+            },
+          });
+        }
+      }
+
+      // For high-severity incidents, always check deployments even without explicit request
+      // High-severity issues are often caused by recent deployments
+      const severity = firstIncident.severity;
+      const isHighSeverity =
+        typeof severity === "string" &&
+        (severity.toLowerCase().includes("sev1") ||
+          severity.toLowerCase().includes("sev2") ||
+          severity.toLowerCase() === "critical" ||
+          severity.toLowerCase() === "p1" ||
+          severity.toLowerCase() === "p2");
+
+      if (isHighSeverity && service && typeof service === "string") {
+        if (!HandlerUtils.isDuplicateToolCall(context, "query-deployments", service)) {
+          suggestions.push({
+            name: "query-deployments",
+            arguments: {
+              scope: { service },
+              limit: 5,
+            },
+          });
         }
       }
     }
@@ -208,6 +241,17 @@ export const incidentFollowUpHandler: FollowUpHandler = async (
               scope: { service: serviceValue },
             },
           });
+
+          // Deployments are a common cause of latency/timeout issues
+          if (!HandlerUtils.isDuplicateToolCall(context, "query-deployments", serviceValue)) {
+            suggestions.push({
+              name: "query-deployments",
+              arguments: {
+                scope: { service: serviceValue },
+                limit: 5,
+              },
+            });
+          }
         }
 
         if (keywords.includes("database")) {

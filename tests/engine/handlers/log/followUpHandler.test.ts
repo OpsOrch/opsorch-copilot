@@ -114,4 +114,181 @@ test('logFollowUpHandler', async (t) => {
         const hasMetrics = suggestions.some(s => s.name === 'describe-metrics');
         assert.equal(hasMetrics, false, 'Should deduplicate describe-metrics against history');
     });
+
+    await t.test('should suggest deployments for timeout error patterns', async () => {
+        const result: ToolResult = {
+            name: 'query-logs',
+            result: [
+                {
+                    timestamp: '2023-01-01T00:00:00Z',
+                    message: 'Request timeout after 30s',
+                    severity: 'error',
+                    service: 'svc-api'
+                }
+            ],
+        };
+
+        const suggestions = await logFollowUpHandler(context, result);
+
+        const deploymentsSuggestion = suggestions.find(s => s.name === 'query-deployments');
+        assert.ok(deploymentsSuggestion, 'should suggest query-deployments for timeout errors');
+        const args = deploymentsSuggestion.arguments as { scope: { service: string }, limit: number };
+        assert.equal(args.scope.service, 'svc-api');
+        assert.equal(args.limit, 5);
+    });
+
+    await t.test('should suggest deployments for connection error patterns', async () => {
+        const result: ToolResult = {
+            name: 'query-logs',
+            result: [
+                {
+                    timestamp: '2023-01-01T00:00:00Z',
+                    message: 'Connection refused to database',
+                    severity: 'error',
+                    service: 'svc-db'
+                }
+            ],
+        };
+
+        const suggestions = await logFollowUpHandler(context, result);
+
+        const deploymentsSuggestion = suggestions.find(s => s.name === 'query-deployments');
+        assert.ok(deploymentsSuggestion, 'should suggest query-deployments for connection errors');
+    });
+
+    await t.test('should suggest deployments for 5xx status code patterns', async () => {
+        const result: ToolResult = {
+            name: 'query-logs',
+            result: [
+                {
+                    timestamp: '2023-01-01T00:00:00Z',
+                    message: 'Returned 502 bad gateway',
+                    severity: 'error',
+                    service: 'svc-gateway'
+                }
+            ],
+        };
+
+        const suggestions = await logFollowUpHandler(context, result);
+
+        const deploymentsSuggestion = suggestions.find(s => s.name === 'query-deployments');
+        assert.ok(deploymentsSuggestion, 'should suggest query-deployments for 5xx errors');
+    });
+
+    await t.test('should suggest deployments when logs mention deployments', async () => {
+        const result: ToolResult = {
+            name: 'query-logs',
+            result: [
+                {
+                    timestamp: '2023-01-01T00:00:00Z',
+                    message: 'Error after deploying version 1.2.3',
+                    severity: 'error',
+                    service: 'svc-app'
+                }
+            ],
+        };
+
+        const suggestions = await logFollowUpHandler(context, result);
+
+        const deploymentsSuggestion = suggestions.find(s => s.name === 'query-deployments');
+        assert.ok(deploymentsSuggestion, 'should suggest query-deployments when logs mention deployments');
+    });
+
+    await t.test('should suggest deployments when user question has latency context', async () => {
+        const contextWithLatency: HandlerContext = {
+            ...context,
+            userQuestion: 'check logs for latency issues'
+        };
+        const result: ToolResult = {
+            name: 'query-logs',
+            result: [
+                {
+                    timestamp: '2023-01-01T00:00:00Z',
+                    message: 'Generic error occurred',
+                    severity: 'error',
+                    service: 'svc-api'
+                }
+            ],
+        };
+
+        const suggestions = await logFollowUpHandler(contextWithLatency, result);
+
+        const deploymentsSuggestion = suggestions.find(s => s.name === 'query-deployments');
+        assert.ok(deploymentsSuggestion, 'should suggest query-deployments when question has latency context');
+    });
+
+    await t.test('should suggest deployments when user question asks about slow performance', async () => {
+        const contextWithSlow: HandlerContext = {
+            ...context,
+            userQuestion: 'why is the service slow?'
+        };
+        const result: ToolResult = {
+            name: 'query-logs',
+            result: [
+                {
+                    timestamp: '2023-01-01T00:00:00Z',
+                    message: 'Request completed with error',
+                    severity: 'error',
+                    service: 'svc-web'
+                }
+            ],
+        };
+
+        const suggestions = await logFollowUpHandler(contextWithSlow, result);
+
+        const deploymentsSuggestion = suggestions.find(s => s.name === 'query-deployments');
+        assert.ok(deploymentsSuggestion, 'should suggest query-deployments when question asks about slow performance');
+    });
+
+    await t.test('should NOT suggest deployments for unrelated error patterns', async () => {
+        const contextWithoutContext: HandlerContext = {
+            ...context,
+            userQuestion: 'show me the logs' // No latency context
+        };
+        const result: ToolResult = {
+            name: 'query-logs',
+            result: [
+                {
+                    timestamp: '2023-01-01T00:00:00Z',
+                    message: 'Invalid user input', // Not a deployment-related error
+                    severity: 'error',
+                    service: 'svc-api'
+                }
+            ],
+        };
+
+        const suggestions = await logFollowUpHandler(contextWithoutContext, result);
+
+        const deploymentsSuggestion = suggestions.find(s => s.name === 'query-deployments');
+        assert.ok(!deploymentsSuggestion, 'should NOT suggest query-deployments for unrelated errors');
+    });
+
+    await t.test('should NOT duplicate deployment suggestions if already called', async () => {
+        const contextWithExisting: HandlerContext = {
+            ...context,
+            userQuestion: 'check latency logs',
+            toolResults: [{
+                name: 'query-deployments',
+                result: [],
+                arguments: { scope: { service: 'svc-dup' } }
+            }]
+        };
+        const result: ToolResult = {
+            name: 'query-logs',
+            result: [
+                {
+                    timestamp: '2023-01-01T00:00:00Z',
+                    message: 'Timeout error',
+                    severity: 'error',
+                    service: 'svc-dup'
+                }
+            ],
+        };
+
+        const suggestions = await logFollowUpHandler(contextWithExisting, result);
+
+        const deploymentsSuggestion = suggestions.find(s => s.name === 'query-deployments');
+        assert.ok(!deploymentsSuggestion, 'should NOT duplicate query-deployments');
+    });
 });
+

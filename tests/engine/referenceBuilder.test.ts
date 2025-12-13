@@ -274,4 +274,79 @@ test('referenceBuilder', async (t) => {
         const refs = buildReferences(results);
         assert.equal(refs, undefined, 'Should return undefined if only describe-metrics present');
     });
+
+    await t.test('extracts deployment IDs', () => {
+        const results: ToolResult[] = [
+            {
+                name: 'query-deployments',
+                result: {
+                    deployments: [
+                        { id: 'DEP-1', version: 'v1.2.3' },
+                        { id: 'DEP-2', version: 'v1.2.4' }
+                    ]
+                },
+                arguments: {}
+            },
+            {
+                name: 'get-deployment',
+                result: { id: 'DEP-3' },
+                arguments: { id: 'DEP-3' }
+            }
+        ];
+
+        const refs = buildReferences(results);
+        assert.ok(refs);
+        assert.ok(refs.deployments);
+        assert.strictEqual(refs.deployments.length, 3);
+        assert.ok(refs.deployments.includes('DEP-1'));
+        assert.ok(refs.deployments.includes('DEP-2'));
+        assert.ok(refs.deployments.includes('DEP-3'));
+    });
+
+    await t.test('extracts deployment IDs from array result', () => {
+        const results: ToolResult[] = [
+            {
+                name: 'query-deployments',
+                result: [
+                    { id: 'DEP-4', status: 'success' },
+                    { id: 'DEP-5', status: 'failed' }
+                ],
+                arguments: {}
+            }
+        ];
+
+        const refs = buildReferences(results);
+        assert.ok(refs);
+        assert.ok(refs.deployments);
+        assert.strictEqual(refs.deployments.length, 2);
+        assert.ok(refs.deployments.includes('DEP-4'));
+        assert.ok(refs.deployments.includes('DEP-5'));
+    });
+
+    await t.test('handles deployment references with mixed valid and invalid data', () => {
+        const results: ToolResult[] = [
+            {
+                name: 'query-deployments',
+                result: [
+                    { id: 'DEP-6', status: 'success' },
+                    { id: '', status: 'failed' }, // empty ID should be ignored
+                    { status: 'pending' }, // missing ID should be ignored
+                    { id: 'DEP-7', status: 'running' }
+                ],
+                arguments: { id: 'DEP-8' }
+            }
+        ];
+
+        const refs = buildReferences(results);
+        assert.ok(refs);
+        assert.ok(refs.deployments);
+        assert.strictEqual(refs.deployments.length, 3);
+        assert.ok(refs.deployments.includes('DEP-6'));
+        assert.ok(refs.deployments.includes('DEP-7'));
+        assert.ok(refs.deployments.includes('DEP-8')); // from args
+        assert.ok(!refs.deployments.includes('')); // empty ID should not be included
+    });
+
+
+
 });

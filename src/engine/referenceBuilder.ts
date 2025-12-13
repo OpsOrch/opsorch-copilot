@@ -44,6 +44,41 @@ function collectIncidentIds(payload: JsonValue): string[] {
 }
 
 /**
+ * Collect deployment IDs from tool result payload.
+ * Uses MCP deploymentSchema field: id (z.string())
+ */
+function collectDeploymentIds(payload: JsonValue): string[] {
+  const ids = new Set<string>();
+  const grabId = (candidate: JsonValue) => {
+    if (
+      candidate &&
+      typeof candidate === "object" &&
+      !Array.isArray(candidate)
+    ) {
+      const obj = candidate as JsonObject;
+      // MCP deploymentSchema: id is z.string()
+      const maybeId = obj.id;
+      if (typeof maybeId === "string" && maybeId.trim())
+        ids.add(maybeId.trim());
+    }
+  };
+
+  // Handle array of deployments directly (from MCP normalized results)
+  if (Array.isArray(payload)) {
+    payload.forEach((item: JsonValue) => grabId(item));
+  }
+  // Handle object with deployments property
+  else if (payload && typeof payload === "object") {
+    const obj = payload as JsonObject;
+    if (Array.isArray(obj.deployments)) {
+      obj.deployments.forEach((item: JsonValue) => grabId(item));
+    }
+  }
+
+  return Array.from(ids);
+}
+
+/**
  * Determine capability type from tool name
  */
 function getCapabilityType(toolName: string): string | null {
@@ -53,6 +88,7 @@ function getCapabilityType(toolName: string): string | null {
   if (toolName.includes("alert")) return "alert";
   if (toolName.includes("metric")) return "metric";
   if (toolName.includes("log")) return "log";
+  if (toolName.includes("deployment")) return "deployment";
   return null;
 }
 
@@ -76,6 +112,7 @@ export function buildReferences(
   const services = new Set<string>();
   const tickets = new Set<string>();
   const alerts = new Set<string>();
+  const deployments = new Set<string>();
   const metrics: MetricReference[] = [];
   const logs: LogReference[] = [];
 
@@ -224,6 +261,13 @@ export function buildReferences(
       }
     }
 
+    if (capabilityType === "deployment") {
+      // MCP deploymentQuerySchema: id is z.string().optional()
+      if (args.id) deployments.add(String(args.id).trim());
+      // Extract deployment IDs from results (only for deployment tools!)
+      collectDeploymentIds(r.result).forEach((id) => deployments.add(id));
+    }
+
     if (capabilityType === "metric") {
       let expression: string | undefined;
 
@@ -360,6 +404,7 @@ export function buildReferences(
   if (services.size) refs.services = Array.from(services);
   if (tickets.size) refs.tickets = Array.from(tickets);
   if (alerts.size) refs.alerts = Array.from(alerts);
+  if (deployments.size) refs.deployments = Array.from(deployments);
   if (metrics.length) refs.metrics = metrics;
   if (logs.length) refs.logs = logs;
 

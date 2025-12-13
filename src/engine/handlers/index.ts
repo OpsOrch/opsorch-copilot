@@ -15,3 +15,4 @@ export * from "./metric/index.js";
 export * from "./service/index.js";
 export * from "./ticket/index.js";
 export * from "./shared/index.js";
+export * from "./deployment/index.js";

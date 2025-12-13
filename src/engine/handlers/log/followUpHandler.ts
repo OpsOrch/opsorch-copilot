@@ -65,6 +65,43 @@ export const logFollowUpHandler: FollowUpHandler = async (
       }
     }
 
+    // Check if error patterns suggest deployment-related issues
+    const deploymentRelatedPatterns = [
+      "timeout",
+      "connection",
+      "gateway timeout",
+      "service unavailable",
+      "500",
+      "502",
+      "503",
+      "504",
+    ];
+    const hasDeploymentRelatedErrors = deploymentRelatedPatterns.some(
+      (pattern) => errorPatterns.has(pattern)
+    );
+
+    // Also check for explicit deployment mentions in error logs
+    const hasDeploymentMention = errorLogs.some((log) => {
+      const message = log.message;
+      if (typeof message !== "string") return false;
+      const lower = message.toLowerCase();
+      return (
+        lower.includes("deploy") ||
+        lower.includes("version") ||
+        lower.includes("rollback") ||
+        lower.includes("release") ||
+        lower.includes("new build")
+      );
+    });
+
+    // Also check user question for latency/performance context
+    const questionLower = context.userQuestion.toLowerCase();
+    const questionHasLatencyContext =
+      questionLower.includes("latency") ||
+      questionLower.includes("slow") ||
+      questionLower.includes("timeout") ||
+      questionLower.includes("performance");
+
     // Suggest discovering available metrics for affected services
     for (const service of Array.from(services).slice(0, 2)) {
       // Deduplicate against existing results and history
@@ -79,6 +116,20 @@ export const logFollowUpHandler: FollowUpHandler = async (
           name: "describe-metrics",
           arguments: {
             scope: { service },
+          },
+        });
+      }
+
+      // Suggest deployments when error patterns indicate possible deployment issues
+      if (
+        (hasDeploymentRelatedErrors || hasDeploymentMention || questionHasLatencyContext) &&
+        !HandlerUtils.isDuplicateToolCall(context, "query-deployments", service)
+      ) {
+        suggestions.push({
+          name: "query-deployments",
+          arguments: {
+            scope: { service },
+            limit: 5,
           },
         });
       }
