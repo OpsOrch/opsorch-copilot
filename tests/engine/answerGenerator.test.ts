@@ -488,5 +488,46 @@ describe('synthesizeCopilotAnswer', () => {
         assert.ok(answer.references?.metrics, 'Metrics should be preserved from static extraction');
     });
 
+    test('preserves team references from static extraction', async () => {
+        const llm: LlmClient = {
+            async chat(_messages: LlmMessage[], _tools: Tool[]) {
+                return {
+                    content: JSON.stringify({
+                        conclusion: 'Team information found.',
+                        confidence: 0.8,
+                        references: {
+                            teams: ['team-velocity', 'team-platform'], // LLM returns teams
+                            services: ['checkout-api']
+                        }
+                    })
+                };
+            }
+        };
+
+        const results: ToolResult[] = [
+            {
+                name: 'query-teams',
+                arguments: {},
+                result: [
+                    { id: 'team-velocity', name: 'Velocity Team' },
+                    { id: 'team-platform', name: 'Platform Team' }
+                ]
+            },
+            {
+                name: 'query-services',
+                arguments: {},
+                result: [{ name: 'checkout-api', owner: 'team-velocity' }]
+            }
+        ];
+
+        const answer = await synthesizeCopilotAnswer('show teams', results, 'chat-teams', llm);
+
+        assert.ok(answer.references, 'References should be defined');
+        // Teams should be from LLM (filtered against static)
+        assert.deepStrictEqual(answer.references?.teams, ['team-velocity', 'team-platform']);
+        // Services should also be preserved
+        assert.deepStrictEqual(answer.references?.services, ['checkout-api']);
+    });
+
 });
 

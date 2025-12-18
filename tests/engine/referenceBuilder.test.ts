@@ -347,6 +347,71 @@ test('referenceBuilder', async (t) => {
         assert.ok(!refs.deployments.includes('')); // empty ID should not be included
     });
 
+    await t.test('extracts team IDs and names', () => {
+        const results: ToolResult[] = [
+            {
+                name: 'query-teams',
+                result: [
+                    { id: 'team-velocity', name: 'Velocity Team' },
+                    { id: 'team-platform', name: 'Platform Team' }
+                ],
+                arguments: {}
+            },
+            {
+                name: 'get-team',
+                result: { id: 'team-sre', name: 'SRE Team' },
+                arguments: { id: 'team-sre' }
+            }
+        ];
+
+        const refs = buildReferences(results);
+        assert.ok(refs);
+        assert.ok(refs.teams);
+        assert.strictEqual(refs.teams.length, 5); // 2 IDs + 2 names + 1 from args
+        assert.ok(refs.teams.includes('team-velocity')); // from result ID
+        assert.ok(refs.teams.includes('Velocity Team')); // from result name
+        assert.ok(refs.teams.includes('team-platform')); // from result ID
+        assert.ok(refs.teams.includes('Platform Team')); // from result name
+        assert.ok(refs.teams.includes('team-sre')); // from args
+    });
+
+    await t.test('extracts teams from real copilot response structure', () => {
+        // This matches the actual structure from the copilot response
+        const results: ToolResult[] = [
+            {
+                name: 'query-teams',
+                result: [
+                    {
+                        id: 'team-velocity',
+                        name: 'Velocity Team',
+                        parent: 'engineering',
+                        tags: { focus: 'checkout-web', organization: 'demo-org' },
+                        metadata: { created_at: '2023-02-01T14:30:00Z' }
+                    }
+                ],
+                arguments: {}
+            },
+            {
+                name: 'get-team',
+                result: {
+                    id: 'team-velocity',
+                    name: 'Velocity Team',
+                    parent: 'engineering',
+                    tags: { focus: 'checkout-web', organization: 'demo-org' },
+                    metadata: { created_at: '2023-02-01T14:30:00Z' }
+                },
+                arguments: { id: 'team-velocity' }
+            }
+        ];
+
+        const refs = buildReferences(results);
+        console.log('Team extraction test - refs:', refs);
+        assert.ok(refs, 'Should have references');
+        assert.ok(refs.teams, 'Should have teams in references');
+        assert.ok(refs.teams.includes('team-velocity'), 'Should include team ID');
+        assert.ok(refs.teams.includes('Velocity Team'), 'Should include team name');
+    });
+
 
 
 });

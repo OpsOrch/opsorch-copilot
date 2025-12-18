@@ -79,6 +79,45 @@ function collectDeploymentIds(payload: JsonValue): string[] {
 }
 
 /**
+ * Collect team IDs and names from tool result payload.
+ * Uses MCP teamSchema fields: id (z.string()), name (z.string())
+ */
+function collectTeamIds(payload: JsonValue): string[] {
+  const ids = new Set<string>();
+  const grabTeamInfo = (candidate: JsonValue) => {
+    if (
+      candidate &&
+      typeof candidate === "object" &&
+      !Array.isArray(candidate)
+    ) {
+      const obj = candidate as JsonObject;
+      // MCP teamSchema: id is z.string()
+      const maybeId = obj.id;
+      if (typeof maybeId === "string" && maybeId.trim())
+        ids.add(maybeId.trim());
+      // MCP teamSchema: name is z.string()
+      const maybeName = obj.name;
+      if (typeof maybeName === "string" && maybeName.trim())
+        ids.add(maybeName.trim());
+    }
+  };
+
+  // Handle array of teams directly (from MCP normalized results)
+  if (Array.isArray(payload)) {
+    payload.forEach((item: JsonValue) => grabTeamInfo(item));
+  }
+  // Handle object with teams property
+  else if (payload && typeof payload === "object") {
+    const obj = payload as JsonObject;
+    if (Array.isArray(obj.teams)) {
+      obj.teams.forEach((item: JsonValue) => grabTeamInfo(item));
+    }
+  }
+
+  return Array.from(ids);
+}
+
+/**
  * Determine capability type from tool name
  */
 function getCapabilityType(toolName: string): string | null {
@@ -89,6 +128,7 @@ function getCapabilityType(toolName: string): string | null {
   if (toolName.includes("metric")) return "metric";
   if (toolName.includes("log")) return "log";
   if (toolName.includes("deployment")) return "deployment";
+  if (toolName.includes("team")) return "team";
   return null;
 }
 
@@ -113,13 +153,14 @@ export function buildReferences(
   const tickets = new Set<string>();
   const alerts = new Set<string>();
   const deployments = new Set<string>();
+  const teams = new Set<string>();
   const metrics: MetricReference[] = [];
   const logs: LogReference[] = [];
 
   for (const r of results) {
     const args = (r.arguments ?? {}) as JsonObject;
 
-    // Extract services from scope for ALL tools (universal extraction)
+    // Extract services and teams from scope for ALL tools (universal extraction)
     if (
       args.scope &&
       typeof args.scope === "object" &&
@@ -128,6 +169,10 @@ export function buildReferences(
       const scopeService = (args.scope as JsonObject).service;
       if (typeof scopeService === "string" && scopeService.trim()) {
         services.add(scopeService.trim());
+      }
+      const scopeTeam = (args.scope as JsonObject).team;
+      if (typeof scopeTeam === "string" && scopeTeam.trim()) {
+        teams.add(scopeTeam.trim());
       }
     }
 
@@ -268,6 +313,13 @@ export function buildReferences(
       collectDeploymentIds(r.result).forEach((id) => deployments.add(id));
     }
 
+    if (capabilityType === "team") {
+      // MCP teamQuerySchema: id is z.string().optional()
+      if (args.id) teams.add(String(args.id).trim());
+      // Extract team IDs and names from results (only for team tools!)
+      collectTeamIds(r.result).forEach((id) => teams.add(id));
+    }
+
     if (capabilityType === "metric") {
       let expression: string | undefined;
 
@@ -405,6 +457,7 @@ export function buildReferences(
   if (tickets.size) refs.tickets = Array.from(tickets);
   if (alerts.size) refs.alerts = Array.from(alerts);
   if (deployments.size) refs.deployments = Array.from(deployments);
+  if (teams.size) refs.teams = Array.from(teams);
   if (metrics.length) refs.metrics = metrics;
   if (logs.length) refs.logs = logs;
 

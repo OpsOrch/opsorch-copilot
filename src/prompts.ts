@@ -147,7 +147,7 @@ export function buildFinalAnswerPrompt(): string {
     '  "conclusion": "2-4 sentences executive summary followed by 3-5 short and concise bullet points",',
     '  "evidence": ["fact with timestamp/ID", ...],',
     '  "missing": ["unknowns", "next step"],',
-    '  "references": { "incidents": [], "services": [], "tickets": [], "alerts": [], "deployments": [] },',
+    '  "references": { "incidents": [], "services": [], "tickets": [], "alerts": [], "deployments": [], "teams": [] },',
     '  "confidence": 0.0',
     "}",
     "",
