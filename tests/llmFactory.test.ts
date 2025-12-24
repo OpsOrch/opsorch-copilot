@@ -3,6 +3,7 @@ import { test, beforeEach, afterEach } from 'node:test';
 import { createLlmFromEnv } from '../src/llmFactory.js';
 import { OpenAiLlm } from '../src/llms/openai.js';
 import { AnthropicLlm } from '../src/llms/anthropic.js';
+import { GeminiLlm } from '../src/llms/gemini.js';
 import { MockLlm } from '../src/llms/mock.js';
 import { NullLlm } from '../src/llms/null.js';
 
@@ -15,6 +16,7 @@ test('llmFactory', async (t) => {
         delete process.env.LLM_PROVIDER;
         delete process.env.OPENAI_API_KEY;
         delete process.env.ANTHROPIC_API_KEY;
+        delete process.env.GEMINI_API_KEY;
     });
 
     afterEach(() => {
@@ -68,6 +70,20 @@ test('llmFactory', async (t) => {
 
     await t.test('is case insensitive for provider name', () => {
         process.env.LLM_PROVIDER = 'MOCK';
+        const llm = createLlmFromEnv();
+        assert.ok(llm instanceof MockLlm);
+    });
+
+    await t.test('creates GeminiLlm when provider is gemini and key is present', () => {
+        process.env.LLM_PROVIDER = 'gemini';
+        process.env.GEMINI_API_KEY = 'test-gemini-key';
+        const llm = createLlmFromEnv();
+        assert.ok(llm instanceof GeminiLlm);
+    });
+
+    await t.test('creates MockLlm when provider is gemini but key is missing', () => {
+        process.env.LLM_PROVIDER = 'gemini';
+        delete process.env.GEMINI_API_KEY;
         const llm = createLlmFromEnv();
         assert.ok(llm instanceof MockLlm);
     });

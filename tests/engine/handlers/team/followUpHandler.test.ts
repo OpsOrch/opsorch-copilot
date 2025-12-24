@@ -1,5 +1,5 @@
 import { teamFollowUpHandler } from "../../../../src/engine/handlers/team/followUpHandler.js";
-import { HandlerContext, ToolResult } from "../../../../src/types.js";
+import { HandlerContext, ToolResult, JsonValue } from "../../../../src/types.js";
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -13,7 +13,7 @@ test("teamFollowUpHandler", async (t) => {
             toolResults: [],
         }) as HandlerContext;
 
-    const createTeamResult = (team: any): ToolResult => ({
+    const createTeamResult = (team: JsonValue): ToolResult => ({
         name: "query-teams",
         arguments: {},
         result: team,
@@ -26,11 +26,11 @@ test("teamFollowUpHandler", async (t) => {
         };
         const context = createContext("tell me about velocity team");
         const toolResult = createTeamResult(team);
-        
+
         const suggestions = await teamFollowUpHandler(context, toolResult);
-        
-        assert(suggestions.some(s => 
-            s.name === "get-team-members" && 
+
+        assert(suggestions.some(s =>
+            s.name === "get-team-members" &&
             s.arguments.id === "team-velocity"
         ));
     });
@@ -42,23 +42,23 @@ test("teamFollowUpHandler", async (t) => {
         };
         const context = createContext("tell me about velocity team");
         const toolResult = createTeamResult(team);
-        
+
         const suggestions = await teamFollowUpHandler(context, toolResult);
-        
-        assert(suggestions.some(s => 
-            s.name === "query-services" && 
-            s.arguments.scope && 
+
+        assert(suggestions.some(s =>
+            s.name === "query-services" &&
+            s.arguments.scope &&
             typeof s.arguments.scope === "object" &&
-            (s.arguments.scope as any).team === "Velocity Team"
+            (s.arguments.scope as Record<string, unknown>).team === "Velocity Team"
         ));
     });
 
     await t.test("should handle invalid tool result gracefully", async () => {
         const context = createContext("tell me about teams");
         const toolResult = { ...createTeamResult(null), result: null };
-        
+
         const suggestions = await teamFollowUpHandler(context, toolResult);
-        
+
         assert.equal(suggestions.length, 0);
     });
 });
