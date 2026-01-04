@@ -23,12 +23,13 @@ export const logFollowUpHandler: FollowUpHandler = async (
     return suggestions;
   }
 
-  // query-logs returns z.array(logEntrySchema)
-  if (!Array.isArray(toolResult.result)) {
+  // query-logs returns LogEntries { entries: LogEntry[], url?: string }
+  const logEntries = toolResult.result as { entries?: JsonObject[]; url?: string };
+  if (!logEntries.entries || !Array.isArray(logEntries.entries)) {
     return suggestions;
   }
 
-  const logs = toolResult.result as JsonObject[];
+  const logs = logEntries.entries;
 
   // Filter for error logs using MCP schema fields
   const errorLogs = logs.filter((log) => {

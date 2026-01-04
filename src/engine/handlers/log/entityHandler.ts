@@ -23,12 +23,13 @@ export const logEntityHandler: EntityHandler = async (
     return entities;
   }
 
-  // query-logs returns z.array(logEntrySchema)
-  if (!Array.isArray(toolResult.result)) {
+  // query-logs returns LogEntries { entries: LogEntry[], url?: string }
+  const logEntries = toolResult.result as { entries?: JsonObject[]; url?: string };
+  if (!logEntries.entries || !Array.isArray(logEntries.entries)) {
     return entities;
   }
 
-  const logs = toolResult.result as JsonObject[];
+  const logs = logEntries.entries;
 
   for (const log of logs) {
     // Extract service (MCP schema: service: z.string().optional())

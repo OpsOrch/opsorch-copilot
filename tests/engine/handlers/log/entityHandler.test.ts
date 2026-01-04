@@ -15,17 +15,20 @@ test('logEntityHandler', async (t) => {
     await t.test('extracts entities from query-logs', async () => {
         const result: ToolResult = {
             name: 'query-logs',
-            result: [
-                {
-                    timestamp: '2024-01-01T10:00:00Z',
-                    service: 'payment-service',
-                    message: 'Error processing request'
-                },
-                {
-                    timestamp: '2024-01-01T10:01:00Z',
-                    message: 'Connection failed to redis-cache'
-                }
-            ],
+            result: {
+                entries: [
+                    {
+                        timestamp: '2024-01-01T10:00:00Z',
+                        service: 'payment-service',
+                        message: 'Error processing request'
+                    },
+                    {
+                        timestamp: '2024-01-01T10:01:00Z',
+                        message: 'Connection failed to redis-cache'
+                    }
+                ],
+                url: 'https://logs.example.com/query?id=123'
+            },
             arguments: {}
         };
 

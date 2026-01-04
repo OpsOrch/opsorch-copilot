@@ -24,7 +24,10 @@ test('logCorrelationHandler', async (t) => {
 
         const result: ToolResult = {
             name: 'query-logs',
-            result: logs
+            result: {
+                entries: logs,
+                url: 'https://logs.example.com/query'
+            }
         };
 
         const events = extractLogEvents(result);
@@ -48,7 +51,9 @@ test('logCorrelationHandler', async (t) => {
 
         const result: ToolResult = {
             name: 'query-logs',
-            result: logs
+            result: {
+                entries: logs
+            }
         };
 
         const events = extractLogEvents(result);

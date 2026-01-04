@@ -39,12 +39,13 @@ function extractScopeFromLogResult(result: ToolResult): QueryScope | null {
   }
 
   if (result.result && typeof result.result === "object") {
-    // query-logs returns z.array(logEntrySchema)
-    if (!Array.isArray(result.result)) {
+    // query-logs returns LogEntries { entries: LogEntry[], url?: string }
+    const logEntries = result.result as { entries?: JsonObject[]; url?: string };
+    if (!logEntries.entries || !Array.isArray(logEntries.entries)) {
       return hasScope ? scope : null;
     }
 
-    const logs = result.result as JsonObject[];
+    const logs = logEntries.entries;
 
     for (const log of logs.slice(0, 5)) {
       // MCP schema: service: z.string().optional()

@@ -35,14 +35,16 @@ test('logFollowUpHandler', async (t) => {
     await t.test('should suggest describe-metrics for error logs with service', async () => {
         const result: ToolResult = {
             name: 'query-logs',
-            result: [
-                {
-                    timestamp: '2023-01-01T00:00:00Z',
-                    message: 'Connection failed to database',
-                    severity: 'error',
-                    service: 'svc-db-conn'
-                }
-            ],
+            result: {
+                entries: [
+                    {
+                        timestamp: '2023-01-01T00:00:00Z',
+                        message: 'Connection failed to database',
+                        severity: 'error',
+                        service: 'svc-db-conn'
+                    }
+                ]
+            },
         };
 
         const suggestions = await logFollowUpHandler(context, result);
@@ -55,14 +57,16 @@ test('logFollowUpHandler', async (t) => {
     await t.test('should NOT suggest describe-metrics if already called in current turn results', async () => {
         const result: ToolResult = {
             name: 'query-logs',
-            result: [
-                {
-                    timestamp: '2023-01-01T00:00:00Z',
-                    message: 'Critical failure',
-                    severity: 'error',
-                    service: 'svc-dup-log'
-                }
-            ],
+            result: {
+                entries: [
+                    {
+                        timestamp: '2023-01-01T00:00:00Z',
+                        message: 'Critical failure',
+                        severity: 'error',
+                        service: 'svc-dup-log'
+                    }
+                ]
+            },
         };
 
         const contextWithExisting: HandlerContext = {
@@ -84,14 +88,16 @@ test('logFollowUpHandler', async (t) => {
     await t.test('should NOT suggest describe-metrics if already called in history', async () => {
         const result: ToolResult = {
             name: 'query-logs',
-            result: [
-                {
-                    timestamp: '2023-01-01T00:00:00Z',
-                    message: 'Another failure',
-                    severity: 'error',
-                    service: 'svc-hist-log'
-                }
-            ],
+            result: {
+                entries: [
+                    {
+                        timestamp: '2023-01-01T00:00:00Z',
+                        message: 'Another failure',
+                        severity: 'error',
+                        service: 'svc-hist-log'
+                    }
+                ]
+            },
         };
 
         const contextWithHistory: HandlerContext = {
@@ -118,14 +124,16 @@ test('logFollowUpHandler', async (t) => {
     await t.test('should suggest deployments for timeout error patterns', async () => {
         const result: ToolResult = {
             name: 'query-logs',
-            result: [
-                {
-                    timestamp: '2023-01-01T00:00:00Z',
-                    message: 'Request timeout after 30s',
-                    severity: 'error',
-                    service: 'svc-api'
-                }
-            ],
+            result: {
+                entries: [
+                    {
+                        timestamp: '2023-01-01T00:00:00Z',
+                        message: 'Request timeout after 30s',
+                        severity: 'error',
+                        service: 'svc-api'
+                    }
+                ]
+            },
         };
 
         const suggestions = await logFollowUpHandler(context, result);
@@ -140,14 +148,16 @@ test('logFollowUpHandler', async (t) => {
     await t.test('should suggest deployments for connection error patterns', async () => {
         const result: ToolResult = {
             name: 'query-logs',
-            result: [
-                {
-                    timestamp: '2023-01-01T00:00:00Z',
-                    message: 'Connection refused to database',
-                    severity: 'error',
-                    service: 'svc-db'
-                }
-            ],
+            result: {
+                entries: [
+                    {
+                        timestamp: '2023-01-01T00:00:00Z',
+                        message: 'Connection refused to database',
+                        severity: 'error',
+                        service: 'svc-db'
+                    }
+                ]
+            },
         };
 
         const suggestions = await logFollowUpHandler(context, result);
@@ -159,14 +169,16 @@ test('logFollowUpHandler', async (t) => {
     await t.test('should suggest deployments for 5xx status code patterns', async () => {
         const result: ToolResult = {
             name: 'query-logs',
-            result: [
-                {
-                    timestamp: '2023-01-01T00:00:00Z',
-                    message: 'Returned 502 bad gateway',
-                    severity: 'error',
-                    service: 'svc-gateway'
-                }
-            ],
+            result: {
+                entries: [
+                    {
+                        timestamp: '2023-01-01T00:00:00Z',
+                        message: 'Returned 502 bad gateway',
+                        severity: 'error',
+                        service: 'svc-gateway'
+                    }
+                ]
+            },
         };
 
         const suggestions = await logFollowUpHandler(context, result);
@@ -178,14 +190,16 @@ test('logFollowUpHandler', async (t) => {
     await t.test('should suggest deployments when logs mention deployments', async () => {
         const result: ToolResult = {
             name: 'query-logs',
-            result: [
-                {
-                    timestamp: '2023-01-01T00:00:00Z',
-                    message: 'Error after deploying version 1.2.3',
-                    severity: 'error',
-                    service: 'svc-app'
-                }
-            ],
+            result: {
+                entries: [
+                    {
+                        timestamp: '2023-01-01T00:00:00Z',
+                        message: 'Error after deploying version 1.2.3',
+                        severity: 'error',
+                        service: 'svc-app'
+                    }
+                ]
+            },
         };
 
         const suggestions = await logFollowUpHandler(context, result);
@@ -201,14 +215,16 @@ test('logFollowUpHandler', async (t) => {
         };
         const result: ToolResult = {
             name: 'query-logs',
-            result: [
-                {
-                    timestamp: '2023-01-01T00:00:00Z',
-                    message: 'Generic error occurred',
-                    severity: 'error',
-                    service: 'svc-api'
-                }
-            ],
+            result: {
+                entries: [
+                    {
+                        timestamp: '2023-01-01T00:00:00Z',
+                        message: 'Generic error occurred',
+                        severity: 'error',
+                        service: 'svc-api'
+                    }
+                ]
+            },
         };
 
         const suggestions = await logFollowUpHandler(contextWithLatency, result);
@@ -224,14 +240,16 @@ test('logFollowUpHandler', async (t) => {
         };
         const result: ToolResult = {
             name: 'query-logs',
-            result: [
-                {
-                    timestamp: '2023-01-01T00:00:00Z',
-                    message: 'Request completed with error',
-                    severity: 'error',
-                    service: 'svc-web'
-                }
-            ],
+            result: {
+                entries: [
+                    {
+                        timestamp: '2023-01-01T00:00:00Z',
+                        message: 'Request completed with error',
+                        severity: 'error',
+                        service: 'svc-web'
+                    }
+                ]
+            },
         };
 
         const suggestions = await logFollowUpHandler(contextWithSlow, result);
@@ -247,14 +265,16 @@ test('logFollowUpHandler', async (t) => {
         };
         const result: ToolResult = {
             name: 'query-logs',
-            result: [
-                {
-                    timestamp: '2023-01-01T00:00:00Z',
-                    message: 'Invalid user input', // Not a deployment-related error
-                    severity: 'error',
-                    service: 'svc-api'
-                }
-            ],
+            result: {
+                entries: [
+                    {
+                        timestamp: '2023-01-01T00:00:00Z',
+                        message: 'Invalid user input',
+                        severity: 'error',
+                        service: 'svc-api'
+                    }
+                ]
+            },
         };
 
         const suggestions = await logFollowUpHandler(contextWithoutContext, result);
@@ -275,14 +295,16 @@ test('logFollowUpHandler', async (t) => {
         };
         const result: ToolResult = {
             name: 'query-logs',
-            result: [
-                {
-                    timestamp: '2023-01-01T00:00:00Z',
-                    message: 'Timeout error',
-                    severity: 'error',
-                    service: 'svc-dup'
-                }
-            ],
+            result: {
+                entries: [
+                    {
+                        timestamp: '2023-01-01T00:00:00Z',
+                        message: 'Timeout error',
+                        severity: 'error',
+                        service: 'svc-dup'
+                    }
+                ]
+            },
         };
 
         const suggestions = await logFollowUpHandler(contextWithExisting, result);

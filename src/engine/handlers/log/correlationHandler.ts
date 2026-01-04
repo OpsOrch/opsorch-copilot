@@ -52,12 +52,13 @@ export function extractLogEvents(result: ToolResult): CorrelationEvent[] {
     return events;
   }
 
-  // query-logs returns z.array(logEntrySchema) directly
-  if (!Array.isArray(payload)) {
+  // query-logs returns LogEntries { entries: LogEntry[], url?: string }
+  const logEntries = payload as { entries?: JsonObject[]; url?: string };
+  if (!logEntries.entries || !Array.isArray(logEntries.entries)) {
     return events;
   }
 
-  const entries = payload as JsonObject[];
+  const entries = logEntries.entries;
 
   // Group errors by time window to detect bursts
   const errorsByWindow = new Map<string, number>();
