@@ -9,6 +9,7 @@ import {
   Tool, // Added Tool import
   ToolCall,
   ToolResult,
+  TurnExecutionTrace,
 } from "../types.js";
 import { requestFollowUpPlan, requestInitialPlan } from "./planner.js";
 import { synthesizeCopilotAnswer } from "./answerGenerator.js";
@@ -163,12 +164,11 @@ export class CopilotEngine {
 
         // Record cache hit in trace
         if (trace) {
-          const resultSize = JSON.stringify(cached.result).length;
           this.executionTracer.recordToolExecution(trace, {
             toolName: call.name,
+            arguments: call.arguments,
             cacheHit: true,
             executionTimeMs: 0,
-            resultSizeBytes: resultSize,
             success: true,
           });
         }
@@ -238,12 +238,11 @@ export class CopilotEngine {
 
         // Record tool execution in trace
         if (trace) {
-          const resultSize = JSON.stringify(result.result).length;
           this.executionTracer.recordToolExecution(trace, {
             toolName: callsToExecute[i].name,
+            arguments: callsToExecute[i].arguments,
             cacheHit: false,
             executionTimeMs: Math.round(executionTime / callsToExecute.length), // Approximate per-tool time
-            resultSizeBytes: resultSize,
             success: !isError,
             error: isError ? String((result.result as { error: string }).error) : undefined,
           });
@@ -531,16 +530,25 @@ export class CopilotEngine {
       this.config.llm,
     );
 
-    // Step 6: Save conversation turn with extracted entities
+    // Step 6: Create TurnExecutionTrace from ExecutionTrace
+    const turnTrace: TurnExecutionTrace = {
+      traceId: trace.traceId,
+      startTime: trace.startTime,
+      endTime: Date.now(),
+      totalDurationMs: Date.now() - trace.startTime,
+      iterations: trace.iterations,
+    };
+
+    // Step 7: Save conversation turn with extracted entities and execution trace
     await this.conversationManager.addTurn(
       chatId,
       question,
-      allResults,
       answer.conclusion,
       allExtractedEntities,
+      turnTrace,
     );
 
-    // Step 7: Generate conversation name for new conversations only
+    // Step 8: Generate conversation name for new conversations only
     if (isNewConversation) {
       try {
         const conversationName = this.chatNamer.generateName(
@@ -568,15 +576,17 @@ export class CopilotEngine {
       `[Copilot][${chatId}] Conversation stats: ${JSON.stringify(await this.conversationManager.stats())}`,
     );
 
-    // Step 8: Complete execution trace
+    // Step 9: Complete execution trace
     this.executionTracer.completeTrace(trace, {
       ...answer,
       chatId,
     });
 
-    const finalAnswer = {
+    // Step 10: Build final answer with execution trace
+    const finalAnswer: CopilotAnswer = {
       ...answer,
       chatId,
+      executionTrace: turnTrace,
     };
     console.log(
       `[Copilot][${chatId}] Returning answer with chatId: ${finalAnswer.chatId}`,

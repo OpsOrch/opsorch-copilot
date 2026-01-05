@@ -17,28 +17,35 @@ import type { ToolCall, JsonObject, HandlerContext } from "../../../types.js";
 
 /**
  * Collects ticket IDs that have already been seen in conversation history.
- * Since query-tickets returns the same data as get-ticket, we skip suggesting
- * get-ticket for tickets we've already retrieved.
+ * Uses executionTrace to check which tools were called with which arguments.
  */
 function getSeenTicketIds(context: HandlerContext): Set<string> {
   const seenIds = new Set<string>();
 
+  // Check entities from conversation history
   for (const turn of context.conversationHistory) {
-    if (turn.toolResults) {
-      for (const result of turn.toolResults) {
-        if (result.name === "query-tickets" || result.name === "get-ticket") {
-          if (Array.isArray(result.result)) {
-            for (const ticket of result.result as JsonObject[]) {
-              if (ticket.id && typeof ticket.id === "string") {
-                seenIds.add(ticket.id);
-              }
-            }
-          } else if (result.result && typeof result.result === "object") {
-            const ticket = result.result as JsonObject;
-            if (ticket.id && typeof ticket.id === "string") {
-              seenIds.add(ticket.id);
-            }
+    if (turn.entities) {
+      for (const entity of turn.entities) {
+        if (entity.type === "ticket") {
+          seenIds.add(entity.value);
+        }
+      }
+    }
+  }
+
+  // Also check current turn's tool results
+  for (const result of context.toolResults) {
+    if (result.name === "query-tickets" || result.name === "get-ticket") {
+      if (Array.isArray(result.result)) {
+        for (const ticket of result.result as JsonObject[]) {
+          if (ticket.id && typeof ticket.id === "string") {
+            seenIds.add(ticket.id);
           }
+        }
+      } else if (result.result && typeof result.result === "object") {
+        const ticket = result.result as JsonObject;
+        if (ticket.id && typeof ticket.id === "string") {
+          seenIds.add(ticket.id);
         }
       }
     }
@@ -84,7 +91,11 @@ export const ticketFollowUpHandler: FollowUpHandler = async (
     const ticketId = firstTicket.id;
 
     // Skip suggesting get-ticket if we've already seen this ticket
-    if (ticketId && typeof ticketId === "string" && !seenTicketIds.has(ticketId)) {
+    if (
+      ticketId &&
+      typeof ticketId === "string" &&
+      !seenTicketIds.has(ticketId)
+    ) {
       suggestions.push({
         name: "get-ticket",
         arguments: { id: ticketId },

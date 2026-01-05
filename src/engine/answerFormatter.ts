@@ -56,15 +56,11 @@ export function formatAnswer(
       conclusion:
         "No tool results were gathered. Please provide more specific details like service names, incident IDs, or time windows.",
       missing: ["tool outputs"],
-      data: [],
       chatId,
       references,
       confidence: 0,
     };
   }
-
-  // Build evidence from results
-  const evidence: string[] = results.map((r) => formatEvidence(r));
 
   // Calculate dynamic confidence
   const confidence = calculateConfidence(results);
@@ -74,8 +70,6 @@ export function formatAnswer(
 
   return {
     conclusion,
-    evidence,
-    data: results,
     references,
     confidence,
     chatId,

@@ -472,11 +472,19 @@ export class HandlerUtils {
     // Check current turn results
     if (context.toolResults.some(checkResult)) return true;
 
-    // Check conversation history
-    if (context.conversationHistory.some(turn => turn.toolResults?.some(checkResult))) return true;
+    // Check conversation history via executionTrace
+    for (const turn of context.conversationHistory) {
+      if (turn.executionTrace) {
+        for (const iteration of turn.executionTrace.iterations) {
+          for (const exec of iteration.toolExecutions) {
+            if (exec.toolName === toolName && exec.success) {
+              return true;
+            }
+          }
+        }
+      }
+    }
 
     return false;
   }
-
-
 }

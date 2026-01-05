@@ -8,7 +8,7 @@ import { getToolKey } from "./toolKeyExtractor.js";
  * instead of configuration-driven follow-up suggestions.
  */
 export class FollowUpEngine {
-  constructor(private followUpRegistry: FollowUpRegistry) { }
+  constructor(private followUpRegistry: FollowUpRegistry) {}
 
   /**
    * Apply follow-up suggestions based on tool results using handlers
@@ -79,11 +79,13 @@ export class FollowUpEngine {
   ): ToolCall[] {
     const seen = new Set<string>();
 
-    // Mark existing calls from history as seen
+    // Mark existing calls from history as seen (using executionTrace)
     for (const turn of history) {
-      if (turn.toolResults) {
-        for (const res of turn.toolResults) {
-          seen.add(getToolKey(res.name, res.arguments));
+      if (turn.executionTrace) {
+        for (const iteration of turn.executionTrace.iterations) {
+          for (const exec of iteration.toolExecutions) {
+            seen.add(getToolKey(exec.toolName, exec.arguments));
+          }
         }
       }
     }

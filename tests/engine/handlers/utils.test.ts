@@ -1,7 +1,36 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { HandlerUtils } from '../../../src/engine/handlers/utils.js';
-import { HandlerContext, ToolResult } from '../../../src/types.js';
+import { HandlerContext, ToolResult, ConversationTurn, TurnExecutionTrace, JsonObject } from '../../../src/types.js';
+
+// Helper to create a ConversationTurn with executionTrace from tool results
+function createTurnWithTools(toolResults: { name: string; result: unknown; arguments?: JsonObject }[]): ConversationTurn {
+    const executionTrace: TurnExecutionTrace = {
+        traceId: `trace-${Date.now()}`,
+        startTime: Date.now(),
+        endTime: Date.now(),
+        totalDurationMs: 100,
+        iterations: [{
+            iterationNumber: 1,
+            plannedTools: [],
+            heuristicModifications: [],
+            toolExecutions: toolResults.map(tr => ({
+                toolName: tr.name,
+                arguments: tr.arguments,
+                cacheHit: false,
+                executionTimeMs: 50,
+                success: true,
+            })),
+            durationMs: 100,
+        }],
+    };
+    return {
+        userMessage: 'previous check',
+        assistantResponse: 'checked',
+        timestamp: Date.now(),
+        executionTrace,
+    };
+}
 
 test('HandlerUtils.isDuplicateToolCall', async (t) => {
     // Mock context
@@ -41,18 +70,11 @@ test('HandlerUtils.isDuplicateToolCall', async (t) => {
     await t.test('should detect duplicate in conversationHistory', () => {
         const contextWithHistory: HandlerContext = {
             ...context,
-            conversationHistory: [
-                {
-                    userMessage: 'check logs',
-                    assistantResponse: 'checking',
-                    timestamp: 123,
-                    toolResults: [{
-                        name: 'describe-metrics',
-                        result: {},
-                        arguments: { scope: { service: 'svc-history' } }
-                    }]
-                }
-            ]
+            conversationHistory: [createTurnWithTools([{
+                name: 'describe-metrics',
+                result: {},
+                arguments: { scope: { service: 'svc-history' } }
+            }])]
         };
 
         // Match history

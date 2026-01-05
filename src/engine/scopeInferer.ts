@@ -35,20 +35,26 @@ export class ScopeInferer {
       userQuestion: question,
     };
 
-    // Try to infer from capability handlers first (only if we have tool results or conversation history)
+    // Try to infer from capability handlers first (only if we have tool results or conversation history with traces)
     const hasToolResults = results.length > 0;
-    const hasHistoryWithTools = conversationHistory.some(turn => 
-      turn.toolResults && turn.toolResults.length > 0
+    const hasHistoryWithTools = conversationHistory.some(
+      (turn) =>
+        turn.executionTrace &&
+        turn.executionTrace.iterations.some(
+          (it) => it.toolExecutions.length > 0,
+        ),
     );
-    
+
     if (hasToolResults || hasHistoryWithTools) {
       const capabilityScope = await this.inferFromCapabilityHandlers(context);
       if (capabilityScope) {
         // Check if scope came from query-incidents results to set appropriate source
-        const hasQueryIncidentResults = results.some(r => r.name === "query-incidents");
+        const hasQueryIncidentResults = results.some(
+          (r) => r.name === "query-incidents",
+        );
         const confidence = hasQueryIncidentResults ? 0.85 : 0.8;
         const source = hasQueryIncidentResults ? "incident" : "previous_query";
-        
+
         return {
           scope: capabilityScope,
           confidence,

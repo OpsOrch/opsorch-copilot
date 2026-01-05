@@ -20,40 +20,47 @@ export const ticketReferenceHandler: ReferenceHandler = async (
     prominence?: number;
   }> = [];
 
+  // Extract tickets from conversation turn entities
   for (const turn of context.conversationHistory) {
-    if (turn.toolResults) {
-      for (const result of turn.toolResults) {
-        // MCP tool names: query-tickets, get-ticket
-        if (result.name === "query-tickets" || result.name === "get-ticket") {
-          const content = result.result;
-          if (content) {
-            // query-tickets returns z.array(ticketSchema)
-            if (Array.isArray(content)) {
-              for (const item of content) {
-                const ticket = item as JsonObject;
-                // MCP schema: id: z.string()
-                const id = ticket.id;
-                if (id && typeof id === "string") {
-                  ticketEntities.push({
-                    value: id,
-                    timestamp: turn.timestamp || Date.now(),
-                    prominence: 1.0,
-                  });
-                }
-              }
-            } else if (typeof content === "object" && content !== null) {
-              // get-ticket returns ticketSchema directly
-              const ticket = content as JsonObject;
-              // MCP schema: id: z.string()
-              const id = ticket.id;
-              if (id && typeof id === "string") {
-                ticketEntities.push({
-                  value: id,
-                  timestamp: turn.timestamp || Date.now(),
-                  prominence: 1.0,
-                });
-              }
+    if (turn.entities) {
+      for (const entity of turn.entities) {
+        if (entity.type === "ticket") {
+          ticketEntities.push({
+            value: entity.value,
+            timestamp: entity.extractedAt || turn.timestamp || Date.now(),
+            prominence: entity.prominence || 1.0,
+          });
+        }
+      }
+    }
+  }
+
+  // Also check current turn's tool results for immediate context
+  for (const result of context.toolResults) {
+    if (result.name === "query-tickets" || result.name === "get-ticket") {
+      const content = result.result;
+      if (content) {
+        if (Array.isArray(content)) {
+          for (const item of content) {
+            const ticket = item as JsonObject;
+            const id = ticket.id;
+            if (id && typeof id === "string") {
+              ticketEntities.push({
+                value: id,
+                timestamp: Date.now(),
+                prominence: 1.0,
+              });
             }
+          }
+        } else if (typeof content === "object" && content !== null) {
+          const ticket = content as JsonObject;
+          const id = ticket.id;
+          if (id && typeof id === "string") {
+            ticketEntities.push({
+              value: id,
+              timestamp: Date.now(),
+              prominence: 1.0,
+            });
           }
         }
       }

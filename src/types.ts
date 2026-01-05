@@ -39,14 +39,22 @@ export type { RuntimeConfig } from "./runtimeConfig.js";
 
 export type CopilotAnswer = {
   conclusion: string; // human-friendly final answer
-  evidence?: string[]; // facts, logs, metrics, incidents
   missing?: string[]; // what info is needed next
   references?: CopilotReferences; // ids/time ranges the console can deep link to
-  data?: ToolResult[]; // raw results from tool calls
   confidence?: number; // 0–1 probability
   chatId: string; // session continuity
-  correlations?: Correlation[]; // detected correlations between events
-  anomalies?: Anomaly[]; // detected metric anomalies
+  executionTrace?: TurnExecutionTrace; // full execution trace for auditability
+};
+
+/**
+ * Execution trace for a single turn, suitable for API response and storage
+ */
+export type TurnExecutionTrace = {
+  traceId: string;
+  startTime: number;
+  endTime: number;
+  totalDurationMs: number;
+  iterations: IterationTrace[];
 };
 
 export type CopilotReferences = {
@@ -101,10 +109,10 @@ export type MetricCorrelation = {
 
 export type ConversationTurn = {
   userMessage: string;
-  toolResults?: ToolResult[];
   assistantResponse?: string;
   timestamp: number;
   entities?: Entity[];
+  executionTrace?: TurnExecutionTrace; // Full execution trace for auditability
 };
 
 export type Conversation = {
@@ -361,11 +369,11 @@ export interface HeuristicModification {
  */
 export interface ToolExecutionTrace {
   toolName: string;
+  arguments?: JsonObject; // Store arguments for Console navigation
   cacheHit: boolean;
   executionTimeMs: number;
   success: boolean;
   error?: string;
-  resultSizeBytes?: number;
 }
 
 /**
