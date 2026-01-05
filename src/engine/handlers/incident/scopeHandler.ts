@@ -154,31 +154,8 @@ export const incidentScopeInferenceHandler: ScopeHandler = async (
     }
   }
 
-  // Also check conversation history for incident-related scope
-  for (const turn of context.conversationHistory) {
-    if (turn.toolResults) {
-      for (const result of turn.toolResults) {
-        if (result.name.includes("incident")) {
-          const extractedScope = extractScopeFromIncidentResult(result);
-          if (extractedScope) {
-            // Fill in missing scope fields from history
-            if (extractedScope.service && !scope.service) {
-              scope.service = extractedScope.service;
-              hasScope = true;
-            }
-            if (extractedScope.environment && !scope.environment) {
-              scope.environment = extractedScope.environment;
-              hasScope = true;
-            }
-            if (extractedScope.team && !scope.team) {
-              scope.team = extractedScope.team;
-              hasScope = true;
-            }
-          }
-        }
-      }
-    }
-  }
+  // Note: We no longer look at conversation history toolResults since they're not stored.
+  // Scope from previous turns should be inferred from entities or the current turn's results.
 
   return hasScope ? scope : null;
 };

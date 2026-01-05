@@ -2,8 +2,37 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { PlanRefiner } from '../../src/engine/planRefiner.js';
 import { ScopeInferer } from '../../src/engine/scopeInferer.js';
-import { ConversationTurn, ToolCall, ToolResult, JsonObject } from '../../src/types.js';
+import { ConversationTurn, ToolCall, ToolResult, JsonObject, TurnExecutionTrace } from '../../src/types.js';
 import { McpClient } from '../../src/mcpClient.js';
+
+// Helper to create a ConversationTurn with executionTrace from tool results
+function createTurnWithTools(toolResults: { name: string; result: unknown; arguments?: JsonObject }[]): ConversationTurn {
+    const executionTrace: TurnExecutionTrace = {
+        traceId: `trace-${Date.now()}`,
+        startTime: Date.now(),
+        endTime: Date.now(),
+        totalDurationMs: 100,
+        iterations: [{
+            iterationNumber: 1,
+            plannedTools: [],
+            heuristicModifications: [],
+            toolExecutions: toolResults.map(tr => ({
+                toolName: tr.name,
+                arguments: tr.arguments,
+                cacheHit: false,
+                executionTimeMs: 50,
+                success: true,
+            })),
+            durationMs: 100,
+        }],
+    };
+    return {
+        userMessage: 'previous check',
+        assistantResponse: 'checked',
+        timestamp: Date.now(),
+        executionTrace,
+    };
+}
 
 // Create a mock MCP client with minimal required interface
 function createMockMcp(): McpClient {
@@ -29,21 +58,17 @@ test('PlanRefiner', async (t) => {
         const mockMcp = createMockMcp();
 
         // Create a conversation turn with an incident query result
-        const conversationTurns: ConversationTurn[] = [{
-            userMessage: 'tell me about the last incident',
-            timestamp: Date.now(),
-            toolResults: [{
-                name: 'query-incidents',
-                arguments: {},
-                result: [{
-                    id: 'inc-012',
-                    service: 'svc-realtime',
-                    status: 'open',
-                    severity: 'sev3',
-                    environment: 'prod'
-                }]
+        const conversationTurns: ConversationTurn[] = [createTurnWithTools([{
+            name: 'query-incidents',
+            arguments: {},
+            result: [{
+                id: 'inc-012',
+                service: 'svc-realtime',
+                status: 'open',
+                severity: 'sev3',
+                environment: 'prod'
             }]
-        }];
+        }])];
 
         // Initial tool calls (empty, so heuristics will add based on intent)
         const calls: ToolCall[] = [{
@@ -121,15 +146,11 @@ test('PlanRefiner', async (t) => {
         const mockMcp = createMockMcp();
 
         // Conversation history with a different service
-        const conversationTurns: ConversationTurn[] = [{
-            userMessage: 'incident info',
-            timestamp: Date.now(),
-            toolResults: [{
-                name: 'query-incidents',
-                arguments: {},
-                result: [{ id: 'inc-1', service: 'history-service' }]
-            }]
-        }];
+        const conversationTurns: ConversationTurn[] = [createTurnWithTools([{
+            name: 'query-incidents',
+            arguments: {},
+            result: [{ id: 'inc-1', service: 'history-service' }]
+        }])];
 
         // Call with explicit scope that should NOT be overwritten
         const calls: ToolCall[] = [{
@@ -163,9 +184,9 @@ test('PlanRefiner', async (t) => {
 
         // 3 previous turns
         const conversationTurns: ConversationTurn[] = [
-            { userMessage: 'turn 1', timestamp: Date.now(), toolResults: [] },
-            { userMessage: 'turn 2', timestamp: Date.now(), toolResults: [] },
-            { userMessage: 'turn 3', timestamp: Date.now(), toolResults: [] }
+            createTurnWithTools([]),
+            createTurnWithTools([]),
+            createTurnWithTools([])
         ];
 
         const previousResults: ToolResult[] = [{
@@ -225,15 +246,11 @@ test('PlanRefiner', async (t) => {
         const mockMcp = createMockMcp();
 
         // Conversation history with query-incidents already executed
-        const conversationTurns: ConversationTurn[] = [{
-            userMessage: 'tell me about the last incident',
-            timestamp: Date.now(),
-            toolResults: [{
-                name: 'query-incidents',
-                arguments: { limit: 1 },
-                result: [{ id: 'inc-012', service: 'svc-realtime' }]
-            }]
-        }];
+        const conversationTurns: ConversationTurn[] = [createTurnWithTools([{
+            name: 'query-incidents',
+            arguments: { limit: 1 },
+            result: [{ id: 'inc-012', service: 'svc-realtime' }]
+        }])];
 
         // Empty initial calls
         const calls: ToolCall[] = [];
@@ -249,7 +266,8 @@ test('PlanRefiner', async (t) => {
         // If query-incidents is suggested, it should have different args
         const incidentCall = refined.find(c => c.name === 'query-incidents');
         if (incidentCall) {
-            const historyArgs = conversationTurns[0].toolResults![0].arguments as JsonObject;
+            // Get the arguments from the first tool execution in the conversation history
+            const historyArgs = conversationTurns[0].executionTrace?.iterations[0]?.toolExecutions[0]?.arguments as JsonObject;
             const newArgs = incidentCall.arguments as JsonObject;
             // The new call might have different args (e.g., different limit) or be absent entirely
             const sameArgs = JSON.stringify(historyArgs) === JSON.stringify(newArgs);
@@ -264,20 +282,16 @@ test('ScopeInferer: uses conversation history for scope inference', async () => 
     const inferer = new ScopeInferer();
 
     // Simulate a follow-up question where previous turn had incident context
-    const conversationHistory: ConversationTurn[] = [{
-        userMessage: 'tell me about the last incident',
-        timestamp: Date.now(),
-        toolResults: [{
-            name: 'query-incidents',
-            arguments: {},
-            result: [{
-                id: 'inc-012',
-                service: 'svc-realtime',
-                status: 'open',
-                severity: 'sev3'
-            }]
+    const conversationHistory: ConversationTurn[] = [createTurnWithTools([{
+        name: 'query-incidents',
+        arguments: {},
+        result: [{
+            id: 'inc-012',
+            service: 'svc-realtime',
+            status: 'open',
+            severity: 'sev3'
         }]
-    }];
+    }])];
 
     const inference = await inferer.inferScope(
         'any alerts',  // follow-up question

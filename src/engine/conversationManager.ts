@@ -8,9 +8,9 @@ import {
   Conversation,
   ConversationConfig,
   LlmMessage,
-  ToolResult,
   Entity,
   ConversationContext,
+  TurnExecutionTrace,
 } from "../types.js";
 import { ConversationStore } from "../conversationStore.js";
 import { createConversationStore } from "../storeFactory.js";
@@ -96,9 +96,9 @@ export class ConversationManager {
   async addTurn(
     chatId: string,
     userMessage: string,
-    toolResults?: ToolResult[],
     assistantResponse?: string,
     entities?: Entity[],
+    executionTrace?: TurnExecutionTrace,
   ): Promise<void> {
     let conversation = await this.store.get(chatId);
 
@@ -116,10 +116,10 @@ export class ConversationManager {
     // Add new turn
     conversation.turns.push({
       userMessage,
-      toolResults,
       assistantResponse,
       timestamp: Date.now(),
       entities,
+      executionTrace,
     });
 
     // Limit conversation length (keep most recent turns)
@@ -135,6 +135,8 @@ export class ConversationManager {
 
   /**
    * Build LLM message history from conversation turns.
+   * Note: Tool results are no longer stored in turns (replaced by executionTrace).
+   * The message history now only includes user messages and assistant responses.
    */
   async buildMessageHistory(chatId: string): Promise<LlmMessage[]> {
     const conversation = await this.getConversation(chatId);
@@ -150,22 +152,6 @@ export class ConversationManager {
         role: "user",
         content: turn.userMessage,
       });
-
-      // Add tool results if any
-      if (turn.toolResults && turn.toolResults.length > 0) {
-        for (const result of turn.toolResults) {
-          const resultText =
-            typeof result.result === "string"
-              ? result.result
-              : JSON.stringify(result.result);
-
-          messages.push({
-            role: "tool",
-            toolName: result.name,
-            content: resultText,
-          });
-        }
-      }
 
       // Add assistant response if any
       if (turn.assistantResponse) {

@@ -48,21 +48,15 @@ test('ConversationManager', async (t) => {
         assert.strictEqual(conversation.turns.length, 5); // maxTurnsPerConversation
     });
 
-    await t.test('addTurn stores tool results and assistant response', async () => {
-        const toolResults = [
-            { name: 'query-incidents', result: { incidents: [] } },
-        ];
-        
+    await t.test('addTurn stores assistant response', async () => {
         await manager.addTurn(
             'chat-1',
             'Show incidents',
-            toolResults,
             'Here are the incidents'
         );
         
         const conversation = await manager.getConversation('chat-1');
         assert.ok(conversation);
-        assert.strictEqual(conversation.turns[0].toolResults?.length, 1);
         assert.strictEqual(conversation.turns[0].assistantResponse, 'Here are the incidents');
     });
 
@@ -95,8 +89,8 @@ test('ConversationManager', async (t) => {
     });
 
     await t.test('buildMessageHistory creates LLM messages', async () => {
-        await manager.addTurn('chat-1', 'First', [], 'Response 1');
-        await manager.addTurn('chat-1', 'Second', [], 'Response 2');
+        await manager.addTurn('chat-1', 'First', 'Response 1');
+        await manager.addTurn('chat-1', 'Second', 'Response 2');
         
         const messages = await manager.buildMessageHistory('chat-1');
         assert.strictEqual(messages.length, 4); // 2 user + 2 assistant
@@ -106,17 +100,13 @@ test('ConversationManager', async (t) => {
         assert.strictEqual(messages[1].content, 'Response 1');
     });
 
-    await t.test('buildMessageHistory includes tool results', async () => {
-        const toolResults = [
-            { name: 'query-incidents', result: { count: 5 } },
-        ];
-        
-        await manager.addTurn('chat-1', 'Show incidents', toolResults, 'Done');
+    await t.test('buildMessageHistory returns user and assistant messages', async () => {
+        await manager.addTurn('chat-1', 'Show incidents', 'Done');
         
         const messages = await manager.buildMessageHistory('chat-1');
-        assert.strictEqual(messages.length, 3); // user + tool + assistant
-        assert.strictEqual(messages[1].role, 'tool');
-        assert.strictEqual(messages[1].toolName, 'query-incidents');
+        assert.strictEqual(messages.length, 2); // user + assistant
+        assert.strictEqual(messages[0].role, 'user');
+        assert.strictEqual(messages[1].role, 'assistant');
     });
 
     await t.test('deleteConversation removes conversation', async () => {
@@ -180,7 +170,7 @@ test('ConversationManager', async (t) => {
             { type: 'incident', value: 'INC-123', extractedAt: Date.now(), source: 'user' },
         ];
         
-        await manager.addTurn('chat-1', 'Check INC-123', [], undefined, entities);
+        await manager.addTurn('chat-1', 'Check INC-123', undefined, entities);
         
         const context = await manager.getEntities('chat-1');
         assert.strictEqual(context.chatId, 'chat-1');

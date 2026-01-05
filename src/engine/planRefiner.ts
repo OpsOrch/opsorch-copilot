@@ -24,11 +24,13 @@ export class PlanRefiner {
       keys.add(getToolKey(result.name, result.arguments));
     }
 
-    // Add tools from conversation history
+    // Add tools from conversation history via executionTrace
     for (const turn of conversationHistory) {
-      if (turn.toolResults) {
-        for (const result of turn.toolResults) {
-          keys.add(getToolKey(result.name, result.arguments));
+      if (turn.executionTrace) {
+        for (const iteration of turn.executionTrace.iterations) {
+          for (const exec of iteration.toolExecutions) {
+            keys.add(getToolKey(exec.toolName, exec.arguments));
+          }
         }
       }
     }

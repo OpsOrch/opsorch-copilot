@@ -8,10 +8,10 @@
  */
 
 import type { ReferenceHandler } from "../handlers.js";
-import type { JsonObject } from "../../../types.js";
 
 /**
  * Reference handler for incident-related references
+ * Uses entities extracted and stored per turn instead of raw toolResults
  */
 export const incidentReferenceHandler: ReferenceHandler = async (
   context,
@@ -23,59 +23,64 @@ export const incidentReferenceHandler: ReferenceHandler = async (
     prominence?: number;
   }> = [];
 
-  // Extract incidents from conversation turns
+  // Extract incidents from conversation turn entities
   for (const turn of context.conversationHistory) {
-    if (turn.toolResults) {
-      for (const result of turn.toolResults) {
-        // Check MCP tool names
-        if (
-          result.name === "query-incidents" ||
-          result.name === "get-incident" ||
-          result.name === "get-incident-timeline"
-        ) {
-          // Check argument paths - MCP uses 'id' for get-incident
-          if (result.arguments) {
-            const args = result.arguments as JsonObject;
-            // MCP schema: id: z.string()
-            const argId = args.id;
-            if (argId && typeof argId === "string") {
+    if (turn.entities) {
+      for (const entity of turn.entities) {
+        if (entity.type === "incident") {
+          incidentEntities.push({
+            value: entity.value,
+            timestamp: entity.extractedAt || turn.timestamp || Date.now(),
+            prominence: entity.prominence || 1.0,
+          });
+        }
+      }
+    }
+  }
+
+  // Also check current turn's tool results for immediate context
+  for (const result of context.toolResults) {
+    if (
+      result.name === "query-incidents" ||
+      result.name === "get-incident" ||
+      result.name === "get-incident-timeline"
+    ) {
+      // Check argument paths - MCP uses 'id' for get-incident
+      if (result.arguments) {
+        const args = result.arguments as Record<string, unknown>;
+        const argId = args.id;
+        if (argId && typeof argId === "string") {
+          incidentEntities.push({
+            value: argId,
+            timestamp: Date.now(),
+            prominence: 1.0,
+          });
+        }
+      }
+
+      const content = result.result;
+      if (content) {
+        if (Array.isArray(content)) {
+          for (const item of content) {
+            const incident = item as Record<string, unknown>;
+            const id = incident.id;
+            if (id && typeof id === "string") {
               incidentEntities.push({
-                value: argId,
-                timestamp: turn.timestamp || Date.now(),
+                value: id,
+                timestamp: Date.now(),
                 prominence: 1.0,
               });
             }
           }
-
-          const content = result.result;
-          if (content) {
-            // query-incidents returns z.array(incidentSchema)
-            if (Array.isArray(content)) {
-              for (const item of content) {
-                const incident = item as JsonObject;
-                // MCP schema: id: z.string()
-                const id = incident.id;
-                if (id && typeof id === "string") {
-                  incidentEntities.push({
-                    value: id,
-                    timestamp: turn.timestamp || Date.now(),
-                    prominence: 1.0,
-                  });
-                }
-              }
-            } else if (typeof content === "object" && content !== null) {
-              // get-incident returns incidentSchema directly
-              const incident = content as JsonObject;
-              // MCP schema: id: z.string()
-              const id = incident.id;
-              if (id && typeof id === "string") {
-                incidentEntities.push({
-                  value: id,
-                  timestamp: turn.timestamp || Date.now(),
-                  prominence: 1.0,
-                });
-              }
-            }
+        } else if (typeof content === "object" && content !== null) {
+          const incident = content as Record<string, unknown>;
+          const id = incident.id;
+          if (id && typeof id === "string") {
+            incidentEntities.push({
+              value: id,
+              timestamp: Date.now(),
+              prominence: 1.0,
+            });
           }
         }
       }
@@ -123,38 +128,21 @@ export const incidentReferenceHandler: ReferenceHandler = async (
 };
 
 /**
- * Extract timestamps from incident timeline results
- *
- * MCP timelineEntrySchema field used:
- * - at: datetime
+ * Extract timestamps from incident timeline - now uses entities
  */
 export function extractTimelineTimestamps(
-  conversationHistory: Array<{ toolResults?: Array<{ name: string; result: unknown }>; timestamp?: number }>,
+  conversationHistory: Array<{ entities?: Array<{ type: string; value: string; extractedAt: number }>; timestamp?: number }>,
 ): Array<{ value: string; timestamp: number }> {
   const timestamps: Array<{ value: string; timestamp: number }> = [];
 
   for (const turn of conversationHistory) {
-    if (turn.toolResults) {
-      for (const result of turn.toolResults) {
-        if (result.name === "get-incident-timeline") {
-          const content = result.result;
-
-          // MCP returns z.array(timelineEntrySchema) directly
-          if (content && Array.isArray(content)) {
-            for (const entry of content) {
-              if (typeof entry === "object" && entry !== null && !Array.isArray(entry)) {
-                const entryObj = entry as JsonObject;
-                // MCP schema: at: z.string().datetime()
-                const at = entryObj.at;
-                if (at && typeof at === "string") {
-                  timestamps.push({
-                    value: at,
-                    timestamp: turn.timestamp || Date.now(),
-                  });
-                }
-              }
-            }
-          }
+    if (turn.entities) {
+      for (const entity of turn.entities) {
+        if (entity.type === "timestamp") {
+          timestamps.push({
+            value: entity.value,
+            timestamp: entity.extractedAt || turn.timestamp || Date.now(),
+          });
         }
       }
     }

@@ -35,22 +35,24 @@ export const serviceFollowUpHandler: FollowUpHandler = async (
 
     if (serviceName && typeof serviceName === "string") {
       // Suggest discovering available metrics for the service, but only if not already discovered
-      // Check existing tool results (current turn) and history
+      // Check existing tool results (current turn) and history via executionTrace
       const alreadyDiscovered =
         context.toolResults.some(
           (r) =>
             r.name === "describe-metrics" &&
             (r.arguments as JsonObject)?.scope &&
             ((r.arguments as JsonObject).scope as JsonObject).service ===
-            serviceName,
+              serviceName,
         ) ||
         context.conversationHistory.some((turn) =>
-          turn.toolResults?.some(
-            (r) =>
-              r.name === "describe-metrics" &&
-              (r.arguments as JsonObject)?.scope &&
-              ((r.arguments as JsonObject).scope as JsonObject).service ===
-              serviceName,
+          turn.executionTrace?.iterations.some((iteration) =>
+            iteration.toolExecutions.some(
+              (exec) =>
+                exec.toolName === "describe-metrics" &&
+                (exec.arguments as JsonObject | undefined)?.scope &&
+                ((exec.arguments as JsonObject).scope as JsonObject).service ===
+                  serviceName,
+            ),
           ),
         );
 
@@ -66,7 +68,7 @@ export const serviceFollowUpHandler: FollowUpHandler = async (
       // Use user question to determine intent for log search
       // e.g. "why is checkout slow?" -> "slow OR latency"
       const searchExpression = generateSearchExpression(
-        context.userQuestion || ""
+        context.userQuestion || "",
       );
 
       suggestions.push({

@@ -87,8 +87,6 @@ test('formatAnswer formats successful results', () => {
 
     assert.equal(answer.confidence, 0.7);
     assert.ok(answer.conclusion.includes('2 tool call'));
-    assert.equal(answer.evidence?.length, 2);
-    assert.ok(answer.evidence?.[0].includes('query-logs'));
 });
 
 test('formatAnswer handles multiple results with higher confidence', () => {

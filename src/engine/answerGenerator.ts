@@ -1,5 +1,4 @@
-import { CopilotAnswer, CopilotReferences, ToolResult, LlmClient, Correlation, Anomaly } from "../types.js";
-import { formatAnswer } from "./answerFormatter.js";
+import { CopilotAnswer, CopilotReferences, ToolResult, LlmClient, Correlation, Anomaly, MetricReference, LogReference, MetricExpression, LogExpression, QueryScope } from "../types.js";
 import { buildFinalAnswerPrompt } from "../prompts.js";
 import { HandlerUtils } from "./handlers/utils.js";
 import { CorrelationDetector } from "./correlationDetector.js";
@@ -19,14 +18,14 @@ export async function synthesizeCopilotAnswer(
   chatId: string,
   llm: LlmClient,
 ): Promise<CopilotAnswer> {
-  const fallback = formatAnswer(question, results, chatId);
-  if (!results.length) return { ...fallback, correlations: [], anomalies: [] };
+  const fallback = createFallbackAnswer(question, results, chatId);
+  if (!results.length) return fallback;
 
   console.log(
     `[Copilot][${chatId}] Synthesizing answer from ${results.length} tool result(s)`,
   );
 
-  // Run correlation and anomaly detection
+  // Run correlation and anomaly detection (used internally for confidence adjustment)
   const { correlations, anomalies } = await runDetectors(results, chatId);
 
   try {
@@ -38,7 +37,7 @@ export async function synthesizeCopilotAnswer(
 
     if (!response || !response.content) {
       console.warn(`[Copilot][${chatId}] LLM synthesis failed, using fallback`);
-      return { ...fallback, correlations, anomalies };
+      return fallback;
     }
 
     // Parse the LLM response
@@ -60,13 +59,310 @@ export async function synthesizeCopilotAnswer(
       confidence: adjustedConfidence,
       references: mergedReferences,
       chatId,
-      evidence: fallback.evidence,
-      correlations,
-      anomalies,
     };
   } catch (error) {
     console.error(`[Copilot][${chatId}] Synthesis error:`, error);
-    return { ...fallback, correlations, anomalies };
+    return fallback;
+  }
+}
+
+/**
+ * Create a fallback answer when LLM synthesis fails or no results
+ */
+function createFallbackAnswer(
+  question: string,
+  results: ToolResult[],
+  chatId: string,
+): CopilotAnswer {
+  if (results.length === 0) {
+    return {
+      conclusion: "I couldn't find any relevant data to answer your question.",
+      confidence: 0.3,
+      chatId,
+    };
+  }
+
+  // Extract references from results
+  const references = extractReferencesFromResults(results);
+
+  return {
+    conclusion: `Based on ${results.length} tool result(s), here's what I found regarding: "${question}"`,
+    confidence: 0.5,
+    references: Object.keys(references).length > 0 ? references : undefined,
+    chatId,
+  };
+}
+
+/**
+ * Extract references from tool results for fallback answers.
+ * Tool results can be:
+ * - Arrays directly (query-incidents returns z.array(incidentSchema))
+ * - Single objects (get-incident returns incidentSchema)
+ * - Objects with nested arrays (some tools return { incidents: [...] })
+ */
+function extractReferencesFromResults(results: ToolResult[]): CopilotReferences {
+  const refs: CopilotReferences = {};
+
+  for (const result of results) {
+    if (result.result === null || result.result === undefined) continue;
+
+    // Extract incident IDs (and service names from incidents)
+    if (result.name.includes('incident')) {
+      refs.incidents = refs.incidents || [];
+      refs.services = refs.services || [];
+      extractIncidentIds(result.result, refs.incidents, refs.services);
+    }
+
+    // Extract service names
+    if (result.name.includes('service')) {
+      refs.services = refs.services || [];
+      extractServiceNames(result.result, refs.services);
+    }
+
+    // Extract alert IDs
+    if (result.name.includes('alert')) {
+      refs.alerts = refs.alerts || [];
+      extractAlertIds(result.result, refs.alerts);
+    }
+
+    // Extract deployment IDs
+    if (result.name.includes('deployment')) {
+      refs.deployments = refs.deployments || [];
+      extractDeploymentIds(result.result, refs.deployments);
+    }
+
+    // Extract ticket IDs
+    if (result.name.includes('ticket')) {
+      refs.tickets = refs.tickets || [];
+      extractTicketIds(result.result, refs.tickets);
+    }
+
+    // Extract metric references from query-metrics tool
+    if (result.name.includes('metric')) {
+      refs.metrics = refs.metrics || [];
+      extractMetricReferences(result, refs.metrics);
+    }
+
+    // Extract log references from query-logs tool
+    if (result.name.includes('log')) {
+      refs.logs = refs.logs || [];
+      extractLogReferences(result, refs.logs);
+    }
+  }
+
+  // Deduplicate all arrays
+  if (refs.incidents) refs.incidents = [...new Set(refs.incidents)];
+  if (refs.services) refs.services = [...new Set(refs.services)];
+  if (refs.alerts) refs.alerts = [...new Set(refs.alerts)];
+  if (refs.deployments) refs.deployments = [...new Set(refs.deployments)];
+  if (refs.tickets) refs.tickets = [...new Set(refs.tickets)];
+  // Metrics and logs are complex objects, dedupe by JSON string
+  if (refs.metrics) refs.metrics = dedupeByJson(refs.metrics);
+  if (refs.logs) refs.logs = dedupeByJson(refs.logs);
+
+  return refs;
+}
+
+function dedupeByJson<T>(arr: T[]): T[] {
+  const seen = new Set<string>();
+  return arr.filter(item => {
+    const key = JSON.stringify(item);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function extractIncidentIds(data: unknown, ids: string[], serviceNames?: string[]): void {
+  if (Array.isArray(data)) {
+    // query-incidents returns array directly
+    for (const item of data) {
+      if (typeof item === 'object' && item !== null) {
+        const obj = item as Record<string, unknown>;
+        if ('id' in obj) {
+          ids.push(String(obj.id));
+        }
+        // Also extract service from incident
+        if (serviceNames && 'service' in obj && obj.service) {
+          serviceNames.push(String(obj.service));
+        }
+      }
+    }
+  } else if (typeof data === 'object' && data !== null) {
+    const obj = data as Record<string, unknown>;
+    // get-incident returns single object
+    if ('id' in obj) {
+      ids.push(String(obj.id));
+    }
+    // Also extract service from incident
+    if (serviceNames && 'service' in obj && obj.service) {
+      serviceNames.push(String(obj.service));
+    }
+    // Some tools return { incidents: [...] }
+    if (Array.isArray(obj.incidents)) {
+      for (const inc of obj.incidents) {
+        if (typeof inc === 'object' && inc !== null) {
+          const incObj = inc as Record<string, unknown>;
+          if ('id' in incObj) {
+            ids.push(String(incObj.id));
+          }
+          if (serviceNames && 'service' in incObj && incObj.service) {
+            serviceNames.push(String(incObj.service));
+          }
+        }
+      }
+    }
+  }
+}
+
+function extractServiceNames(data: unknown, names: string[]): void {
+  if (Array.isArray(data)) {
+    for (const item of data) {
+      if (typeof item === 'object' && item !== null) {
+        const obj = item as Record<string, unknown>;
+        if ('name' in obj) names.push(String(obj.name));
+        else if ('id' in obj) names.push(String(obj.id));
+      }
+    }
+  } else if (typeof data === 'object' && data !== null) {
+    const obj = data as Record<string, unknown>;
+    if ('name' in obj) names.push(String(obj.name));
+    else if ('id' in obj) names.push(String(obj.id));
+    if (Array.isArray(obj.services)) {
+      for (const svc of obj.services) {
+        if (typeof svc === 'object' && svc !== null) {
+          const s = svc as Record<string, unknown>;
+          if ('name' in s) names.push(String(s.name));
+          else if ('id' in s) names.push(String(s.id));
+        }
+      }
+    }
+  }
+}
+
+function extractAlertIds(data: unknown, ids: string[]): void {
+  if (Array.isArray(data)) {
+    for (const item of data) {
+      if (typeof item === 'object' && item !== null && 'id' in item) {
+        ids.push(String((item as { id: unknown }).id));
+      }
+    }
+  } else if (typeof data === 'object' && data !== null) {
+    const obj = data as Record<string, unknown>;
+    if ('id' in obj) ids.push(String(obj.id));
+    if (Array.isArray(obj.alerts)) {
+      for (const alert of obj.alerts) {
+        if (typeof alert === 'object' && alert !== null && 'id' in alert) {
+          ids.push(String((alert as { id: unknown }).id));
+        }
+      }
+    }
+  }
+}
+
+function extractDeploymentIds(data: unknown, ids: string[]): void {
+  if (Array.isArray(data)) {
+    for (const item of data) {
+      if (typeof item === 'object' && item !== null && 'id' in item) {
+        ids.push(String((item as { id: unknown }).id));
+      }
+    }
+  } else if (typeof data === 'object' && data !== null) {
+    const obj = data as Record<string, unknown>;
+    if ('id' in obj) ids.push(String(obj.id));
+    if (Array.isArray(obj.deployments)) {
+      for (const dep of obj.deployments) {
+        if (typeof dep === 'object' && dep !== null && 'id' in dep) {
+          ids.push(String((dep as { id: unknown }).id));
+        }
+      }
+    }
+  }
+}
+
+function extractTicketIds(data: unknown, ids: string[]): void {
+  if (Array.isArray(data)) {
+    for (const item of data) {
+      if (typeof item === 'object' && item !== null) {
+        const obj = item as Record<string, unknown>;
+        if ('id' in obj) ids.push(String(obj.id));
+        else if ('key' in obj) ids.push(String(obj.key));
+      }
+    }
+  } else if (typeof data === 'object' && data !== null) {
+    const obj = data as Record<string, unknown>;
+    if ('id' in obj) ids.push(String(obj.id));
+    else if ('key' in obj) ids.push(String(obj.key));
+    if (Array.isArray(obj.tickets)) {
+      for (const ticket of obj.tickets) {
+        if (typeof ticket === 'object' && ticket !== null) {
+          const t = ticket as Record<string, unknown>;
+          if ('id' in t) ids.push(String(t.id));
+          else if ('key' in t) ids.push(String(t.key));
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Extract metric references from query-metrics tool results.
+ * Uses the tool arguments to build a MetricReference with deep-linking metadata.
+ */
+function extractMetricReferences(result: ToolResult, refs: MetricReference[]): void {
+  // Get the arguments used to call the tool - these contain the query parameters
+  const args = result.arguments as Record<string, unknown> | undefined;
+  if (!args) return;
+
+  // Build MetricReference from tool arguments
+  const expression = args.expression as Record<string, unknown> | undefined;
+  if (!expression) return;
+
+  const metricRef: MetricReference = {
+    expression: {
+      metricName: String(expression.metricName || ''),
+      aggregation: expression.aggregation ? String(expression.aggregation) : undefined,
+      filters: Array.isArray(expression.filters) ? expression.filters as MetricExpression['filters'] : undefined,
+      groupBy: Array.isArray(expression.groupBy) ? expression.groupBy as string[] : undefined,
+    },
+    start: args.start ? String(args.start) : undefined,
+    end: args.end ? String(args.end) : undefined,
+    step: typeof args.step === 'number' ? args.step : undefined,
+    scope: args.scope as QueryScope | undefined,
+  };
+
+  // Only add if we have a metric name
+  if (metricRef.expression.metricName) {
+    refs.push(metricRef);
+  }
+}
+
+/**
+ * Extract log references from query-logs tool results.
+ * Uses the tool arguments to build a LogReference with deep-linking metadata.
+ */
+function extractLogReferences(result: ToolResult, refs: LogReference[]): void {
+  // Get the arguments used to call the tool - these contain the query parameters
+  const args = result.arguments as Record<string, unknown> | undefined;
+  if (!args) return;
+
+  // Build LogReference from tool arguments
+  const expression = args.expression as Record<string, unknown> | undefined;
+
+  const logRef: LogReference = {
+    expression: {
+      search: expression?.search ? String(expression.search) : undefined,
+      filters: Array.isArray(expression?.filters) ? expression.filters as LogExpression['filters'] : undefined,
+      severityIn: Array.isArray(expression?.severityIn) ? expression.severityIn as string[] : undefined,
+    },
+    start: args.start ? String(args.start) : undefined,
+    end: args.end ? String(args.end) : undefined,
+    scope: args.scope as QueryScope | undefined,
+  };
+
+  // Only add if we have some search criteria
+  if (logRef.expression.search || logRef.expression.filters?.length || logRef.expression.severityIn?.length) {
+    refs.push(logRef);
   }
 }
 

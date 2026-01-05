@@ -2,7 +2,36 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { alertFollowUpHandler } from '../../../../src/engine/handlers/alert/followUpHandler.js';
-import { ToolResult, HandlerContext } from '../../../../src/types.js';
+import { ToolResult, HandlerContext, ConversationTurn, TurnExecutionTrace, JsonObject } from '../../../../src/types.js';
+
+// Helper to create a ConversationTurn with executionTrace from tool results
+function createTurnWithTools(toolResults: { name: string; result: unknown; arguments?: JsonObject }[]): ConversationTurn {
+    const executionTrace: TurnExecutionTrace = {
+        traceId: `trace-${Date.now()}`,
+        startTime: Date.now(),
+        endTime: Date.now(),
+        totalDurationMs: 100,
+        iterations: [{
+            iterationNumber: 1,
+            plannedTools: [],
+            heuristicModifications: [],
+            toolExecutions: toolResults.map(tr => ({
+                toolName: tr.name,
+                arguments: tr.arguments,
+                cacheHit: false,
+                executionTimeMs: 50,
+                success: true,
+            })),
+            durationMs: 100,
+        }],
+    };
+    return {
+        userMessage: 'previous check',
+        assistantResponse: 'checked',
+        timestamp: Date.now(),
+        executionTrace,
+    };
+}
 
 
 test('alertFollowUpHandler', async (t) => {
@@ -175,18 +204,13 @@ test('alertFollowUpHandler', async (t) => {
 
         const contextWithHistory: HandlerContext = {
             ...context,
-            conversationHistory: [{
-                userMessage: 'previous check',
-                assistantResponse: 'checked',
-                timestamp: Date.now(),
-                toolResults: [
-                    {
-                        name: 'describe-metrics',
-                        result: {},
-                        arguments: { scope: { service: 'svc-hist-alert' } }
-                    }
-                ]
-            }]
+            conversationHistory: [createTurnWithTools([
+                {
+                    name: 'describe-metrics',
+                    result: {},
+                    arguments: { scope: { service: 'svc-hist-alert' } }
+                }
+            ])]
         };
 
         const suggestions = await alertFollowUpHandler(contextWithHistory, result);
@@ -205,18 +229,13 @@ test('alertFollowUpHandler', async (t) => {
 
         const contextWithHistory: HandlerContext = {
             ...context,
-            conversationHistory: [{
-                userMessage: 'previous check',
-                assistantResponse: 'checked',
-                timestamp: Date.now(),
-                toolResults: [
-                    {
-                        name: 'query-logs',
-                        result: [],
-                        arguments: { scope: { service: 'svc-logs-dup' } }
-                    }
-                ]
-            }]
+            conversationHistory: [createTurnWithTools([
+                {
+                    name: 'query-logs',
+                    result: [],
+                    arguments: { scope: { service: 'svc-logs-dup' } }
+                }
+            ])]
         };
 
         const suggestions = await alertFollowUpHandler(contextWithHistory, result);

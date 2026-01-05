@@ -78,7 +78,6 @@ test('ExecutionTracer: records tool executions', () => {
     toolName: 'query-incidents',
     cacheHit: false,
     executionTimeMs: 150,
-    resultSizeBytes: 1024,
     success: true,
   };
 
@@ -98,7 +97,6 @@ test('ExecutionTracer: records cache hits', () => {
     toolName: 'query-logs',
     cacheHit: true,
     executionTimeMs: 0,
-    resultSizeBytes: 512,
     success: true,
   };
 
@@ -118,7 +116,6 @@ test('ExecutionTracer: records tool failures', () => {
     toolName: 'query-metrics',
     cacheHit: false,
     executionTimeMs: 200,
-    resultSizeBytes: 0,
     success: false,
     error: 'Connection timeout',
   };
@@ -152,7 +149,6 @@ test('ExecutionTracer: completes trace with final answer', () => {
 
   const answer: CopilotAnswer = {
     conclusion: 'Test conclusion',
-    evidence: ['Evidence 1', 'Evidence 2'],
     confidence: 0.85,
     chatId: 'chat-1',
   };
@@ -190,35 +186,30 @@ test('ExecutionTracer: calculates cache hit rate correctly', () => {
     toolName: 'tool1',
     cacheHit: true,
     executionTimeMs: 0,
-    resultSizeBytes: 100,
     success: true,
   });
   tracer.recordToolExecution(trace, {
     toolName: 'tool2',
     cacheHit: true,
     executionTimeMs: 0,
-    resultSizeBytes: 100,
     success: true,
   });
   tracer.recordToolExecution(trace, {
     toolName: 'tool3',
     cacheHit: false,
     executionTimeMs: 100,
-    resultSizeBytes: 200,
     success: true,
   });
   tracer.recordToolExecution(trace, {
     toolName: 'tool4',
     cacheHit: false,
     executionTimeMs: 150,
-    resultSizeBytes: 300,
     success: true,
   });
   tracer.recordToolExecution(trace, {
     toolName: 'tool5',
     cacheHit: false,
     executionTimeMs: 200,
-    resultSizeBytes: 400,
     success: true,
   });
 
@@ -247,14 +238,12 @@ test('ExecutionTracer: tracks failed tool count', () => {
     toolName: 'tool1',
     cacheHit: false,
     executionTimeMs: 100,
-    resultSizeBytes: 100,
     success: true,
   });
   tracer.recordToolExecution(trace, {
     toolName: 'tool2',
     cacheHit: false,
     executionTimeMs: 100,
-    resultSizeBytes: 0,
     success: false,
     error: 'Error 1',
   });
@@ -262,7 +251,6 @@ test('ExecutionTracer: tracks failed tool count', () => {
     toolName: 'tool3',
     cacheHit: false,
     executionTimeMs: 100,
-    resultSizeBytes: 0,
     success: false,
     error: 'Error 2',
   });

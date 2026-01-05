@@ -22,77 +22,68 @@ export const teamReferenceHandler: ReferenceHandler = async (
     prominence?: number;
   }> = [];
 
-  // Extract teams from conversation turns
+  // Extract teams from conversation turn entities
   for (const turn of context.conversationHistory) {
-    if (turn.toolResults) {
-      for (const result of turn.toolResults) {
-        // Check MCP tool names for team-related tools
-        if (
-          result.name === "query-teams" ||
-          result.name === "get-team" ||
-          result.name === "get-team-members"
-        ) {
-          // Check argument paths - MCP uses 'id' for get-team and get-team-members
-          if (result.arguments) {
-            const args = result.arguments as JsonObject;
-            // MCP schema: id: z.string()
-            const argId = args.id;
-            if (argId && typeof argId === "string") {
-              teamEntities.push({
-                value: argId,
-                timestamp: turn.timestamp || Date.now(),
-                prominence: 1.0,
-              });
-            }
-          }
-
-          const content = result.result;
-          if (content) {
-            // query-teams returns z.array(teamSchema)
-            if (Array.isArray(content)) {
-              for (const item of content) {
-                const team = item as JsonObject;
-                // MCP schema: id: z.string(), name: z.string()
-                const id = team.id;
-                const name = team.name;
-                if (id && typeof id === "string") {
-                  teamEntities.push({
-                    value: id,
-                    name: typeof name === "string" ? name : undefined,
-                    timestamp: turn.timestamp || Date.now(),
-                    prominence: 1.0,
-                  });
-                }
-              }
-            } else if (typeof content === "object" && content !== null) {
-              // get-team returns teamSchema directly
-              const team = content as JsonObject;
-              // MCP schema: id: z.string(), name: z.string()
-              const id = team.id;
-              const name = team.name;
-              if (id && typeof id === "string") {
-                teamEntities.push({
-                  value: id,
-                  name: typeof name === "string" ? name : undefined,
-                  timestamp: turn.timestamp || Date.now(),
-                  prominence: 1.0,
-                });
-              }
-            }
-          }
-        }
-      }
-    }
-
-    // Also extract from entities if available
     if (turn.entities) {
       for (const entity of turn.entities) {
         if (entity.type === "team") {
           teamEntities.push({
             value: entity.value,
-            timestamp: turn.timestamp || Date.now(),
+            timestamp: entity.extractedAt || turn.timestamp || Date.now(),
             prominence: entity.prominence || 0.8,
           });
+        }
+      }
+    }
+  }
+
+  // Also check current turn's tool results for immediate context
+  for (const result of context.toolResults) {
+    if (
+      result.name === "query-teams" ||
+      result.name === "get-team" ||
+      result.name === "get-team-members"
+    ) {
+      if (result.arguments) {
+        const args = result.arguments as JsonObject;
+        const argId = args.id;
+        if (argId && typeof argId === "string") {
+          teamEntities.push({
+            value: argId,
+            timestamp: Date.now(),
+            prominence: 1.0,
+          });
+        }
+      }
+
+      const content = result.result;
+      if (content) {
+        if (Array.isArray(content)) {
+          for (const item of content) {
+            const team = item as JsonObject;
+            const id = team.id;
+            const name = team.name;
+            if (id && typeof id === "string") {
+              teamEntities.push({
+                value: id,
+                name: typeof name === "string" ? name : undefined,
+                timestamp: Date.now(),
+                prominence: 1.0,
+              });
+            }
+          }
+        } else if (typeof content === "object" && content !== null) {
+          const team = content as JsonObject;
+          const id = team.id;
+          const name = team.name;
+          if (id && typeof id === "string") {
+            teamEntities.push({
+              value: id,
+              name: typeof name === "string" ? name : undefined,
+              timestamp: Date.now(),
+              prominence: 1.0,
+            });
+          }
         }
       }
     }
@@ -125,7 +116,7 @@ export const teamReferenceHandler: ReferenceHandler = async (
     const matchingEntities = teamEntities.filter((entity) => {
       const lowerValue = entity.value.toLowerCase();
       const lowerName = entity.name?.toLowerCase();
-      
+
       // Check if reference contains the team ID or name
       return (
         lowerRef.includes(lowerValue) ||
@@ -173,7 +164,7 @@ export const teamReferenceHandler: ReferenceHandler = async (
         const extractedName = match[1].toLowerCase();
         // Find team with matching name
         const nameMatch = teamEntities.find(
-          (entity) => entity.name?.toLowerCase() === extractedName
+          (entity) => entity.name?.toLowerCase() === extractedName,
         );
         if (nameMatch) {
           return nameMatch.value;
