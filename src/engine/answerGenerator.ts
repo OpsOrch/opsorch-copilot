@@ -1,4 +1,4 @@
-import { CopilotAnswer, CopilotReferences, ToolResult, LlmClient, Correlation, Anomaly, MetricReference, LogReference, MetricExpression, LogExpression, QueryScope } from "../types.js";
+import { CopilotAnswer, CopilotAction, CopilotReferences, ToolResult, LlmClient, Correlation, Anomaly, MetricReference, LogReference, MetricExpression, LogExpression, QueryScope } from "../types.js";
 import { buildFinalAnswerPrompt } from "../prompts.js";
 import { HandlerUtils } from "./handlers/utils.js";
 import { CorrelationDetector } from "./correlationDetector.js";
@@ -50,14 +50,22 @@ export async function synthesizeCopilotAnswer(
       anomalies,
     );
 
+    const planLabels = collectOrchestrationPlanLabels(results);
+    const staticActions = collectOrchestrationActions(results);
+
     // Merge references: prefer LLM-returned simple references (they're relevance-filtered)
     // but keep static extraction for complex references (metrics, logs) with deep-linking metadata
     const mergedReferences = mergeReferences(fallback.references, synthesized.references);
+    const mergedActions = mergeActions(staticActions, synthesized.actions);
 
     return {
-      conclusion: synthesized.conclusion || fallback.conclusion,
+      conclusion: ensureOrchestrationRecommendation(
+        synthesized.conclusion || fallback.conclusion,
+        planLabels,
+      ),
       confidence: adjustedConfidence,
       references: mergedReferences,
+      actions: mergedActions,
       chatId,
     };
   } catch (error) {
@@ -84,11 +92,17 @@ function createFallbackAnswer(
 
   // Extract references from results
   const references = extractReferencesFromResults(results);
+  const planLabels = collectOrchestrationPlanLabels(results);
+  const actions = collectOrchestrationActions(results);
 
   return {
-    conclusion: `Based on ${results.length} tool result(s), here's what I found regarding: "${question}"`,
+    conclusion: ensureOrchestrationRecommendation(
+      `Based on ${results.length} tool result(s), here's what I found regarding: "${question}"`,
+      planLabels,
+    ),
     confidence: 0.5,
     references: Object.keys(references).length > 0 ? references : undefined,
+    actions: actions.length > 0 ? actions : undefined,
     chatId,
   };
 }
@@ -148,6 +162,12 @@ function extractReferencesFromResults(results: ToolResult[]): CopilotReferences 
       refs.logs = refs.logs || [];
       extractLogReferences(result, refs.logs);
     }
+
+    // Extract orchestration plan IDs
+    if (result.name.includes('orchestration')) {
+      refs.orchestrationPlans = refs.orchestrationPlans || [];
+      extractOrchestrationPlanIds(result.result, refs.orchestrationPlans);
+    }
   }
 
   // Deduplicate all arrays
@@ -159,6 +179,7 @@ function extractReferencesFromResults(results: ToolResult[]): CopilotReferences 
   // Metrics and logs are complex objects, dedupe by JSON string
   if (refs.metrics) refs.metrics = dedupeByJson(refs.metrics);
   if (refs.logs) refs.logs = dedupeByJson(refs.logs);
+  if (refs.orchestrationPlans) refs.orchestrationPlans = [...new Set(refs.orchestrationPlans)];
 
   return refs;
 }
@@ -366,6 +387,113 @@ function extractLogReferences(result: ToolResult, refs: LogReference[]): void {
   }
 }
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const collectPlanRecords = (data: unknown): Record<string, unknown>[] => {
+  if (Array.isArray(data)) {
+    return data.filter(isRecord);
+  }
+
+  if (isRecord(data)) {
+    if (Array.isArray(data.plans)) {
+      return data.plans.filter(isRecord);
+    }
+    if (Array.isArray(data.items)) {
+      return data.items.filter(isRecord);
+    }
+    return [data];
+  }
+
+  return [];
+};
+
+const getStringField = (record: Record<string, unknown>, fields: string[]): string | null => {
+  for (const field of fields) {
+    const value = record[field];
+    if (typeof value === "string" && value.trim()) {
+      return value;
+    }
+    if (typeof value === "number") {
+      return String(value);
+    }
+  }
+  return null;
+};
+
+/**
+ * Extract orchestration plan IDs from orchestration tool results.
+ */
+function extractOrchestrationPlanIds(data: unknown, ids: string[]): void {
+  const records = collectPlanRecords(data);
+  for (const record of records) {
+    const id = getStringField(record, ["id"]);
+    if (id) ids.push(id);
+  }
+}
+
+function collectOrchestrationActions(results: ToolResult[]): CopilotAction[] {
+  const actions: CopilotAction[] = [];
+
+  for (const result of results) {
+    if (!result.name.includes("orchestration")) continue;
+
+    const records = collectPlanRecords(result.result);
+    for (const record of records) {
+      const id = getStringField(record, ["id"]);
+      const name = getStringField(record, ["title", "name", "displayName"]);
+      if (!id && !name) continue;
+
+      actions.push({
+        type: "orchestration_plan",
+        id: id ?? undefined,
+        name: name ?? undefined,
+      });
+    }
+  }
+
+  const seen = new Set<string>();
+  return actions.filter((action) => {
+    const key = `${action.type}:${action.id ?? ""}:${action.name ?? ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function collectOrchestrationPlanLabels(results: ToolResult[]): string[] {
+  const labels: string[] = [];
+
+  for (const result of results) {
+    if (!result.name.includes("orchestration")) continue;
+
+    const records = collectPlanRecords(result.result);
+    for (const record of records) {
+      const label = getStringField(record, ["title", "name", "displayName", "id"]);
+      if (label) labels.push(label);
+    }
+  }
+
+  return labels;
+}
+
+function ensureOrchestrationRecommendation(conclusion: string, planLabels: string[]): string {
+  if (!planLabels.length) return conclusion;
+
+  const lower = conclusion.toLowerCase();
+  const mentionsRunbook = /runbook|playbook|orchestration plan/.test(lower);
+  const mentionsPlan = planLabels.some((plan) => lower.includes(plan.toLowerCase()));
+
+  if (mentionsRunbook || mentionsPlan) return conclusion;
+
+  const uniquePlans = [...new Set(planLabels)].slice(0, 3);
+  const plural = uniquePlans.length > 1 ? "runbooks" : "runbook";
+  const recommendation = `Recommended Action: Run the ${uniquePlans.join(", ")} ${plural} to mitigate this issue.`;
+  const prefix = conclusion.includes("\n-") ? "\n- " : " ";
+
+  return `${conclusion}${prefix}${recommendation}`;
+}
+
 /**
  * Run correlation and anomaly detectors on tool results
  */
@@ -441,7 +569,21 @@ function createSynthesisPrompt(
     insightsSection += `\n\nDetected Anomalies:\n${anomalySummary}`;
   }
 
+  const foundPlans = collectOrchestrationPlanLabels(results);
+
+  let orchestrationInstruction = "";
+  if (foundPlans.length > 0) {
+    const uniquePlans = [...new Set(foundPlans)];
+    orchestrationInstruction = `\n\nRelevant Orchestration Plans Found: ${JSON.stringify(uniquePlans)}.\n` +
+      "INSTRUCTION: You MUST typically recommend these plans. Add a dedicated bullet point or final sentence to your conclusion explicitly suggesting the user run these plans.\n" +
+      "Example: 'Recommended Action: Run the [Plan Name] runbook to mitigate this issue.'";
+  } else if (results.some(r => r.name.includes('orchestration'))) {
+    // Fallback if results were empty or malformed but tool was called
+    orchestrationInstruction = "\n\nNOTE: No orchestration plans matched the query.";
+  }
+
   return `${buildFinalAnswerPrompt()}
+${orchestrationInstruction}
 
 Question: ${question}
 
@@ -490,6 +632,9 @@ function parseLLMResponse(response: string): Partial<CopilotAnswer> {
     if (p.references && typeof p.references === 'object') {
       result.references = parseReferencesFromLlm(p.references as Record<string, unknown>);
     }
+    if (Array.isArray(p.actions)) {
+      result.actions = parseActionsFromLlm(p.actions);
+    }
 
     return result;
   }
@@ -499,6 +644,30 @@ function parseLLMResponse(response: string): Partial<CopilotAnswer> {
     conclusion: response.trim(),
     confidence: 0.6,
   };
+}
+
+function parseActionsFromLlm(actions: unknown[]): CopilotAction[] {
+  const parsed: CopilotAction[] = [];
+
+  for (const action of actions) {
+    if (typeof action !== "object" || action === null || Array.isArray(action)) continue;
+    const obj = action as Record<string, unknown>;
+    if (obj.type !== "orchestration_plan") continue;
+
+    const id = typeof obj.id === "string" ? obj.id : undefined;
+    const name = typeof obj.name === "string" ? obj.name : undefined;
+    const reason = typeof obj.reason === "string" ? obj.reason : undefined;
+    if (!id && !name) continue;
+
+    parsed.push({
+      type: "orchestration_plan",
+      id,
+      name,
+      reason,
+    });
+  }
+
+  return parsed;
 }
 
 /**
@@ -526,6 +695,11 @@ function parseReferencesFromLlm(refs: Record<string, unknown>): CopilotReference
   if (Array.isArray(refs.teams)) {
     result.teams = refs.teams.filter((t): t is string => typeof t === 'string');
   }
+  if (Array.isArray(refs.orchestration_plans)) {
+    result.orchestrationPlans = refs.orchestration_plans.filter((p): p is string => typeof p === 'string');
+  } else if (Array.isArray(refs.orchestrationPlans)) {
+    result.orchestrationPlans = refs.orchestrationPlans.filter((p): p is string => typeof p === 'string');
+  }
 
   return result;
 }
@@ -551,6 +725,7 @@ function mergeReferences(
   const validAlerts = new Set(staticRefs.alerts || []);
   const validDeployments = new Set(staticRefs.deployments || []);
   const validTeams = new Set(staticRefs.teams || []);
+  const validPlans = new Set(staticRefs.orchestrationPlans || []);
 
   // Filter LLM refs to only include values that exist in static refs
   // This prevents the LLM from inventing service names or IDs
@@ -560,6 +735,7 @@ function mergeReferences(
   const filteredLlmAlerts = llmRefs.alerts?.filter(a => validAlerts.has(a)) || [];
   const filteredLlmDeployments = llmRefs.deployments?.filter(d => validDeployments.has(d)) || [];
   const filteredLlmTeams = llmRefs.teams?.filter(t => validTeams.has(t)) || [];
+  const filteredLlmPlans = llmRefs.orchestrationPlans?.filter(p => validPlans.has(p)) || [];
 
   // Use filtered LLM refs if they have values, otherwise fall back to static
   const merged: CopilotReferences = {
@@ -569,6 +745,7 @@ function mergeReferences(
     alerts: filteredLlmAlerts.length ? filteredLlmAlerts : staticRefs.alerts,
     deployments: filteredLlmDeployments.length ? filteredLlmDeployments : staticRefs.deployments,
     teams: filteredLlmTeams.length ? filteredLlmTeams : staticRefs.teams,
+    orchestrationPlans: filteredLlmPlans.length ? filteredLlmPlans : staticRefs.orchestrationPlans,
     // Always use static refs for complex types (they have rich query metadata for deep-linking)
     metrics: staticRefs.metrics,
     logs: staticRefs.logs,
@@ -583,6 +760,35 @@ function mergeReferences(
   if (merged.teams && merged.teams.length === 0) delete merged.teams;
   if (merged.metrics && merged.metrics.length === 0) delete merged.metrics;
   if (merged.logs && merged.logs.length === 0) delete merged.logs;
+  if (merged.orchestrationPlans && merged.orchestrationPlans.length === 0) delete merged.orchestrationPlans;
 
   return Object.keys(merged).length ? merged : undefined;
+}
+
+function mergeActions(
+  staticActions: CopilotAction[],
+  llmActions: CopilotAction[] | undefined,
+): CopilotAction[] | undefined {
+  if (!staticActions.length && !llmActions?.length) return undefined;
+  if (!llmActions || llmActions.length === 0) return staticActions.length ? staticActions : undefined;
+
+  const validIds = new Set(staticActions.map((action) => action.id).filter((id): id is string => !!id));
+  const validNames = new Set(staticActions.map((action) => action.name).filter((name): name is string => !!name));
+
+  const filtered = llmActions.filter((action) => {
+    if (action.id && validIds.has(action.id)) return true;
+    if (action.name && validNames.has(action.name)) return true;
+    return false;
+  });
+
+  if (filtered.length === 0) return staticActions.length ? staticActions : undefined;
+
+  const combined = [...filtered];
+  const seen = new Set<string>();
+  return combined.filter((action) => {
+    const key = `${action.type}:${action.id ?? ""}:${action.name ?? ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }

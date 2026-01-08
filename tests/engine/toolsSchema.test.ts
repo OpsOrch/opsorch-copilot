@@ -450,5 +450,115 @@ test('validateToolCall strips null fields from arguments', () => {
     assert.equal(scope.environment, 'prod');
 });
 
+test('validateToolCall allows required nullable fields', () => {
+    const tool: Tool = {
+        name: 'query-orchestration-plans',
+        inputSchema: {
+            type: 'object',
+            required: ['scope', 'tags'],
+            properties: {
+                scope: { type: ['object', 'null'] },
+                tags: { type: ['object', 'null'] },
+                query: { type: ['string', 'null'] },
+            },
+        },
+    };
 
+    const call: ToolCall = {
+        name: 'query-orchestration-plans',
+        arguments: {
+            scope: null,
+            tags: null,
+            query: 'correlation',
+        },
+    };
 
+    const result = validateToolCall(call, tool);
+    assert.equal(result.valid, true);
+    assert.equal(result.errors.length, 0);
+});
+
+test('validateToolCall rejects null for non-nullable required fields', () => {
+    const tool: Tool = {
+        name: 'query-orchestration-plans',
+        inputSchema: {
+            type: 'object',
+            required: ['scope'],
+            properties: {
+                scope: { type: 'object' },
+            },
+        },
+    };
+
+    const call: ToolCall = {
+        name: 'query-orchestration-plans',
+        arguments: {
+            scope: null,
+        },
+    };
+
+    const result = validateToolCall(call, tool);
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.some(e => e.includes('scope')));
+});
+
+test('validateToolCall allows nulls for required nested fields when nullable', () => {
+    const tool: Tool = {
+        name: 'query-logs',
+        inputSchema: {
+            type: 'object',
+            required: ['scope'],
+            properties: {
+                scope: {
+                    type: 'object',
+                    required: ['service', 'team', 'environment'],
+                    properties: {
+                        service: { type: ['string', 'null'] },
+                        team: { type: ['string', 'null'] },
+                        environment: { type: ['string', 'null'] },
+                    },
+                },
+            },
+        },
+    };
+
+    const call: ToolCall = {
+        name: 'query-logs',
+        arguments: {
+            scope: {
+                service: null,
+                team: null,
+                environment: null,
+            },
+        },
+    };
+
+    const result = validateToolCall(call, tool);
+    assert.equal(result.valid, true);
+});
+
+test('validateToolCall allows missing required fields when nullable', () => {
+    const tool: Tool = {
+        name: 'query-orchestration-plans',
+        inputSchema: {
+            type: 'object',
+            required: ['scope', 'tags'],
+            properties: {
+                scope: { type: ['object', 'null'] },
+                tags: { type: ['object', 'null'] },
+                query: { type: ['string', 'null'] },
+            },
+        },
+    };
+
+    const call: ToolCall = {
+        name: 'query-orchestration-plans',
+        arguments: {
+            query: 'correlation',
+        },
+    };
+
+    const result = validateToolCall(call, tool);
+    assert.equal(result.valid, true);
+    assert.equal(result.errors.length, 0);
+});

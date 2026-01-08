@@ -41,9 +41,17 @@ export type CopilotAnswer = {
   conclusion: string; // human-friendly final answer
   missing?: string[]; // what info is needed next
   references?: CopilotReferences; // ids/time ranges the console can deep link to
+  actions?: CopilotAction[]; // recommended actions for the UI
   confidence?: number; // 0–1 probability
   chatId: string; // session continuity
   executionTrace?: TurnExecutionTrace; // full execution trace for auditability
+};
+
+export type CopilotAction = {
+  type: "orchestration_plan";
+  id?: string;
+  name?: string;
+  reason?: string;
 };
 
 /**
@@ -66,6 +74,7 @@ export type CopilotReferences = {
   alerts?: string[]; // alert IDs
   deployments?: string[]; // deployment IDs
   teams?: string[]; // team IDs/names
+  orchestrationPlans?: string[]; // orchestration plan IDs
 };
 
 export type MetricReference = {
@@ -131,7 +140,7 @@ export type ConversationConfig = {
 
 // EntityExtractor types
 export interface Entity {
-  type: "incident" | "service" | "timestamp" | "ticket" | "alert" | "metric" | "deployment" | "team";
+  type: "incident" | "service" | "timestamp" | "ticket" | "alert" | "metric" | "deployment" | "team" | "orchestration_plan";
   value: string;
   extractedAt: number;
   source: string;
@@ -306,6 +315,8 @@ export interface ValidationResult {
   valid: boolean;
   normalizedArgs?: JsonObject;
   errors?: ValidationError[];
+  /** If validation fails, suggest a replacement tool call instead */
+  replacementCall?: ToolCall;
 }
 
 /**

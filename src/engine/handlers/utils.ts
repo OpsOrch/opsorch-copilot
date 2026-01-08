@@ -478,7 +478,16 @@ export class HandlerUtils {
         for (const iteration of turn.executionTrace.iterations) {
           for (const exec of iteration.toolExecutions) {
             if (exec.toolName === toolName && exec.success) {
-              return true;
+              if (!serviceScope) {
+                return true;
+              }
+              const args = exec.arguments;
+              if (args) {
+                const scope = args.scope as JsonObject | undefined;
+                if (scope?.service === serviceScope) {
+                  return true;
+                }
+              }
             }
           }
         }

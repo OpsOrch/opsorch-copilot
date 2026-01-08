@@ -74,6 +74,64 @@ test('FollowUpEngine', async (t) => {
         assert.strictEqual(refined.length, 0);
     });
 
+    await t.test('applyFollowUps suggests orchestration plans for active incidents', async () => {
+        const results: ToolResult[] = [
+            {
+                name: 'query-incidents',
+                result: [
+                    { id: 'INC-123', service: 'payment-api', status: 'active' }
+                ],
+                arguments: {},
+            },
+        ];
+
+        const refined = await engine.applyFollowUps(results, 'test-chat', [], 'what caused this incident?');
+        const orchestrationCall = refined.find(c => c.name === 'query-orchestration-plans');
+
+        assert.ok(orchestrationCall);
+        const scope = orchestrationCall?.arguments?.scope as { service?: string } | undefined;
+        assert.equal(scope?.service, 'payment-api');
+    });
+
+    await t.test('applyFollowUps avoids duplicating orchestration plan calls', async () => {
+        const results: ToolResult[] = [
+            {
+                name: 'query-incidents',
+                result: [
+                    { id: 'INC-123', service: 'payment-api', status: 'active' }
+                ],
+                arguments: {},
+            },
+        ];
+
+        const plannedCalls = [
+            {
+                name: 'query-orchestration-plans',
+                arguments: { scope: { service: 'payment-api' } },
+            },
+        ];
+
+        const refined = await engine.applyFollowUps(results, 'test-chat', [], 'what caused this incident?', plannedCalls);
+        const orchestrationCalls = refined.filter(c => c.name === 'query-orchestration-plans');
+
+        assert.equal(orchestrationCalls.length, 0);
+    });
+
+    await t.test('applyFollowUps skips orchestration plans when no problem signal', async () => {
+        const results: ToolResult[] = [
+            {
+                name: 'query-incidents',
+                result: [],
+                arguments: {},
+            },
+        ];
+
+        const refined = await engine.applyFollowUps(results, 'test-chat', [], 'show me services');
+        const orchestrationCalls = refined.filter(c => c.name === 'query-orchestration-plans');
+
+        assert.equal(orchestrationCalls.length, 0);
+    });
+
     await t.test('deduplicates suggestions with similar timestamps (fuzzy matching)', async () => {
         const results: ToolResult[] = [
             {
@@ -103,4 +161,3 @@ test('FollowUpEngine', async (t) => {
         assert.strictEqual(toolServiceKeys.length, uniqueKeys.size, 'Should have no duplicate tool+service combinations');
     });
 });
-
