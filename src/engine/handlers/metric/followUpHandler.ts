@@ -106,6 +106,53 @@ export const metricFollowUpHandler: FollowUpHandler = async (
     }
   }
 
+  // Suggest describe-metrics for any services found in the results
+  // This helps the LLM know what other metrics are available for investigation
+  for (const service of suggestedDeploymentServices) {
+    if (
+      !HandlerUtils.isDuplicateToolCall(context, "describe-metrics", service)
+    ) {
+      suggestions.push({
+        name: "describe-metrics",
+        arguments: {
+          scope: { service },
+        },
+      });
+    }
+  }
+
+  // Also check services from the results that weren't necessarily latency related
+  // We want to discover metrics for ANY service we see data for
+  const allServices = new Set<string>();
+  for (const metricSeries of series) {
+    const service = metricSeries.service;
+    if (service && typeof service === "string") {
+      allServices.add(service);
+    }
+  }
+
+  for (const service of allServices) {
+    // Skip if we already suggested it via the latency block above (heuristic optimization)
+    // Actually the duplicate check handles this, but we can be explicit or just rely on the util.
+    // relying on util is safer.
+    if (!HandlerUtils.isDuplicateToolCall(context, "describe-metrics", service)) {
+      // Check if we already added it to suggestions in this turn
+      const alreadySuggested = suggestions.some(s =>
+        s.name === "describe-metrics" &&
+        (s.arguments.scope as any)?.service === service
+      );
+
+      if (!alreadySuggested) {
+        suggestions.push({
+          name: "describe-metrics",
+          arguments: {
+            scope: { service },
+          },
+        });
+      }
+    }
+  }
+
   return suggestions;
 };
 

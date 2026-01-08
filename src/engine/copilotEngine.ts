@@ -395,6 +395,7 @@ export class CopilotEngine {
           chatId,
           conversationTurns,
           questionForPlanning,
+          plannedCalls,
         );
         plannedCalls.push(...followUpSuggestions);
 
@@ -413,6 +414,8 @@ export class CopilotEngine {
       plannedCalls = await this.planRefiner.refineCalls(
         plannedCalls,
         this.mcp.getTools(),
+        conversationTurns,
+        allResults,
       );
 
       // Limit calls

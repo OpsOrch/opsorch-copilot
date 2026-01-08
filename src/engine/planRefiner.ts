@@ -40,9 +40,12 @@ export class PlanRefiner {
 
   async refineCalls(
     calls: ToolCall[],
-    tools: Tool[], // Pass tools explicitly to avoid extra calls
+    tools: Tool[],
+    conversationHistory: ConversationTurn[] = [],
+    previousResults: ToolResult[] = [],
   ): Promise<ToolCall[]> {
     const validatedCalls: Array<{ call: ToolCall; valid: boolean }> = [];
+    const replacementCalls: ToolCall[] = [];
 
     for (const call of calls) {
       const tool = tools.find((t) => t.name === call.name);
@@ -51,13 +54,13 @@ export class PlanRefiner {
         continue;
       }
 
-      // Create handler context
+      // Create handler context with conversation history for proper validation
       const context: HandlerContext = {
         chatId: "plan-refinement",
-        turnNumber: 0,
-        conversationHistory: [],
-        toolResults: [],
-        userQuestion: "", // Context not strictly needed for this validation pass
+        turnNumber: conversationHistory.length,
+        conversationHistory,
+        toolResults: previousResults,
+        userQuestion: "",
       };
 
       // Use ValidationRegistry to validate and refine (fix) the call
@@ -80,13 +83,20 @@ export class PlanRefiner {
         } else {
           validatedCalls.push({ call, valid: true });
         }
+      } else if (validation.replacementCall) {
+        // Validation failed but a replacement was suggested
+        console.log(`[PlanRefiner] Replacing ${call.name} with ${validation.replacementCall.name}`);
+        replacementCalls.push(validation.replacementCall);
+        validatedCalls.push({ call, valid: false });
       } else {
-        // Validation failed
+        // Validation failed with no replacement
         validatedCalls.push({ call, valid: false });
       }
     }
 
-    return validatedCalls.filter((v) => v.valid).map((v) => v.call);
+    // Return replacement calls first, then valid calls
+    const validCalls = validatedCalls.filter((v) => v.valid).map((v) => v.call);
+    return [...replacementCalls, ...validCalls];
   }
 
   async applyHeuristics(
@@ -98,8 +108,8 @@ export class PlanRefiner {
   ): Promise<ToolCall[]> {
     const tools = await mcp.listTools();
 
-    // 1. Validate LLM Plan and strip null fields
-    let augmented = await this.refineCalls(calls, tools);
+    // 1. Validate LLM Plan, strip null fields, and handle replacements
+    let augmented = await this.refineCalls(calls, tools, conversationHistory, previousResults || []);
 
     // 2. Get already-executed tool keys to avoid re-suggesting
     const executedKeys = this.getExecutedToolKeys(
@@ -170,3 +180,4 @@ export class PlanRefiner {
     return augmented;
   }
 }
+

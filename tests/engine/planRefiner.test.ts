@@ -42,6 +42,7 @@ function createMockMcp(): McpClient {
             { name: 'query-incidents', parameters: { type: 'object', properties: {} } },
             { name: 'query-logs', parameters: { type: 'object', properties: {} } },
             { name: 'query-metrics', parameters: { type: 'object', properties: {} } },
+            { name: 'describe-metrics', parameters: { type: 'object', properties: {} } },
         ],
         // Stub out other required methods - they aren't called in these tests
         callTool: async () => ({ name: 'stub', result: {} }),
@@ -275,6 +276,79 @@ test('PlanRefiner', async (t) => {
                 'Should not re-suggest query-incidents with exact same args from conversation history');
         }
         // If no incidentCall, that's also valid - the tool was skipped as duplicate
+    });
+
+    await t.test('should replace query-metrics with describe-metrics when no prior discovery', async () => {
+        const scopeInferer = new ScopeInferer();
+        const planRefiner = new PlanRefiner(scopeInferer);
+        const mockMcp = createMockMcp();
+
+        // LLM proposes query-metrics without prior describe-metrics
+        const calls: ToolCall[] = [{
+            name: 'query-metrics',
+            arguments: {
+                scope: { service: 'svc-cache' },
+                expression: { metricName: 'error_rate' },
+                start: '2024-01-01T10:00:00Z',
+                end: '2024-01-01T11:00:00Z',
+                step: 60
+            }
+        }];
+
+        // No prior describe-metrics in history
+        const conversationTurns: ConversationTurn[] = [];
+
+        const refined = await planRefiner.applyHeuristics(
+            'show me error rate for svc-cache',
+            calls,
+            mockMcp,
+            conversationTurns,
+            []
+        );
+
+        // Should have describe-metrics instead of/before query-metrics
+        const describeCall = refined.find(c => c.name === 'describe-metrics');
+        assert.ok(describeCall, 'Should inject describe-metrics as replacement');
+
+        const queryCall = refined.find(c => c.name === 'query-metrics');
+        assert.ok(!queryCall, 'Should remove query-metrics when describe-metrics not called first');
+    });
+
+    await t.test('should keep query-metrics when describe-metrics was already called', async () => {
+        const scopeInferer = new ScopeInferer();
+        const planRefiner = new PlanRefiner(scopeInferer);
+        const mockMcp = createMockMcp();
+
+        // LLM proposes query-metrics
+        const calls: ToolCall[] = [{
+            name: 'query-metrics',
+            arguments: {
+                scope: { service: 'svc-cache' },
+                expression: { metricName: 'error_rate' },
+                start: '2024-01-01T10:00:00Z',
+                end: '2024-01-01T11:00:00Z',
+                step: 60
+            }
+        }];
+
+        // describe-metrics was called in a previous turn
+        const conversationTurns: ConversationTurn[] = [createTurnWithTools([{
+            name: 'describe-metrics',
+            arguments: { scope: { service: 'svc-cache' } },
+            result: [{ name: 'error_rate' }, { name: 'latency_p99' }]
+        }])];
+
+        const refined = await planRefiner.applyHeuristics(
+            'show me error rate for svc-cache',
+            calls,
+            mockMcp,
+            conversationTurns,
+            []
+        );
+
+        // Should keep query-metrics since describe-metrics was already called
+        const queryCall = refined.find(c => c.name === 'query-metrics');
+        assert.ok(queryCall, 'Should keep query-metrics when describe-metrics was already called');
     });
 });
 

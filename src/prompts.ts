@@ -25,7 +25,6 @@ const JSON_OUTPUT_FORMAT = [
 const TOOL_RESTRICTIONS = [
   "DO NOT USE these tools:",
   "• list-providers: Admin/debugging only, not for user questions.",
-  "• describe-metrics: Only when discovering metric names before query-metrics.",
 ].join("\n");
 
 const FALLBACK_STRATEGY = [
@@ -59,6 +58,7 @@ export function buildSystemPrompt(): string {
     "• Max 5 tool iterations per investigation.",
     "• Combine logs + metrics + alerts when helpful.",
     "• Treat MCP schemas as strict contracts.",
+    "• PROACTIVELY search for orchestration plans (runbooks) when investigating incidents or degraded services.",
   ].join('\n');
 }
 
@@ -147,7 +147,8 @@ export function buildFinalAnswerPrompt(): string {
     '  "conclusion": "2-4 sentences executive summary followed by 3-5 short and concise bullet points",',
     '  "evidence": ["fact with timestamp/ID", ...],',
     '  "missing": ["unknowns", "next step"],',
-    '  "references": { "incidents": [], "services": [], "tickets": [], "alerts": [], "deployments": [], "teams": [] },',
+    '  "actions": [{"type":"orchestration_plan","id":"...","name":"...","reason":"..."}],',
+    '  "references": { "incidents": [], "services": [], "tickets": [], "alerts": [], "deployments": [], "teams": [], "orchestrationPlans": [] },',
     '  "confidence": 0.0',
     "}",
     "",
@@ -155,6 +156,8 @@ export function buildFinalAnswerPrompt(): string {
     "• No invented statements; only cite tool data.",
     "• Include concrete timestamps and IDs.",
     "• Prefer concise, scannable bullets.",
+    "• If orchestration plans were found, include them as actions.",
+    "• Action 'reason' must be ONE sentence explaining why this plan is relevant to the current issue. Do NOT list runbook steps. Example: 'Fixes analytics lag by backfilling missing data.'",
   ].join("\n");
 }
 

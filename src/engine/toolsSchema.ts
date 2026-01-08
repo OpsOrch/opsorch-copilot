@@ -55,6 +55,7 @@ export function validateToolCall(
   const rawArgs = (call.arguments || {}) as JsonObject;
   const cleanedArgs = stripNullFields(rawArgs) as JsonObject;
   const schemaObj = schema as JsonObject;
+  const properties = schemaObj.properties as JsonObject | undefined;
 
   // Check required fields
   const required = Array.isArray(schemaObj.required)
@@ -63,14 +64,23 @@ export function validateToolCall(
   for (const field of required) {
     const value = cleanedArgs[field];
     if (value === undefined || value === null) {
-      errors.push(getRequiredFieldError(call.name, field));
+      const rawValue = rawArgs[field];
+      const propSchema = properties?.[field] as JsonObject | undefined;
+      const type = propSchema?.type;
+      const allowsNull =
+        (Array.isArray(type) && type.includes("null")) || type === "null";
+      const nullAllowed = rawValue === null && allowsNull;
+      const missingAllowed = rawValue === undefined && allowsNull;
+
+      if (!nullAllowed && !missingAllowed) {
+        errors.push(getRequiredFieldError(call.name, field));
+      }
     } else if (typeof value === "string" && !value.trim()) {
       errors.push(`Required field '${field}' is empty`);
     }
   }
 
   // Validate types if properties defined
-  const properties = schemaObj.properties as JsonObject | undefined;
   if (properties) {
     for (const [key, value] of Object.entries(cleanedArgs)) {
       const propSchema = properties[key] as JsonObject | undefined;
@@ -182,7 +192,14 @@ export function validateToolCall(
         !Array.isArray(value) &&
         propSchema.properties
       ) {
-        const nestedResult = validateObject(value as JsonObject, propSchema);
+        const rawValue = rawArgs[key];
+        const rawObj =
+          typeof rawValue === "object" &&
+          rawValue !== null &&
+          !Array.isArray(rawValue)
+            ? (rawValue as JsonObject)
+            : undefined;
+        const nestedResult = validateObject(value as JsonObject, propSchema, rawObj);
         errors.push(...nestedResult.errors.map((e) => `${key}.${e}`));
         warnings.push(...nestedResult.warnings.map((w) => `${key}.${w}`));
       }
@@ -205,7 +222,11 @@ export function validateToolCall(
 /**
  * Validate nested object
  */
-function validateObject(obj: JsonObject, schema: JsonObject): ToolValidationResult {
+function validateObject(
+  obj: JsonObject,
+  schema: JsonObject,
+  rawObj?: JsonObject,
+): ToolValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
 
@@ -219,7 +240,16 @@ function validateObject(obj: JsonObject, schema: JsonObject): ToolValidationResu
     : [];
   for (const field of required) {
     if (!(field in obj) || obj[field] === undefined || obj[field] === null) {
-      errors.push(`Missing required field: ${field}`);
+      const propSchema = properties[field] as JsonObject | undefined;
+      const type = propSchema?.type;
+      const allowsNull =
+        (Array.isArray(type) && type.includes("null")) || type === "null";
+      const rawValue = rawObj?.[field];
+      const nullAllowed = rawValue === null && allowsNull;
+      const missingAllowed = rawValue === undefined && allowsNull;
+      if (!nullAllowed && !missingAllowed) {
+        errors.push(`Missing required field: ${field}`);
+      }
     }
   }
 

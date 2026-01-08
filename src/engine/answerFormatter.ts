@@ -1,4 +1,4 @@
-import { CopilotAnswer, ToolResult } from "../types.js";
+import { CopilotAnswer, CopilotAction, ToolResult } from "../types.js";
 import { buildReferences } from "./referenceBuilder.js";
 
 /**
@@ -49,6 +49,7 @@ export function formatAnswer(
   }
 
   const references = buildReferences(results);
+  const actions = buildActions(results);
 
   // Handle empty results
   if (!results.length) {
@@ -58,6 +59,7 @@ export function formatAnswer(
       missing: ["tool outputs"],
       chatId,
       references,
+      actions,
       confidence: 0,
     };
   }
@@ -71,7 +73,54 @@ export function formatAnswer(
   return {
     conclusion,
     references,
+    actions,
     confidence,
     chatId,
   };
+}
+
+function buildActions(results: ToolResult[]): CopilotAction[] | undefined {
+  const actions: CopilotAction[] = [];
+
+  for (const result of results) {
+    if (!result.name.includes("orchestration")) continue;
+    const value = result.result;
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        if (typeof item !== "object" || item === null || Array.isArray(item)) continue;
+        const record = item as Record<string, unknown>;
+        const id = typeof record.id === "string" ? record.id : undefined;
+        const name = typeof record.title === "string"
+          ? record.title
+          : typeof record.name === "string"
+            ? record.name
+            : undefined;
+        if (id || name) {
+          actions.push({ type: "orchestration_plan", id, name });
+        }
+      }
+    } else if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+      const record = value as Record<string, unknown>;
+      const id = typeof record.id === "string" ? record.id : undefined;
+      const name = typeof record.title === "string"
+        ? record.title
+        : typeof record.name === "string"
+          ? record.name
+          : undefined;
+      if (id || name) {
+        actions.push({ type: "orchestration_plan", id, name });
+      }
+    }
+  }
+
+  if (!actions.length) return undefined;
+
+  const seen = new Set<string>();
+  return actions.filter((action) => {
+    const key = `${action.type}:${action.id ?? ""}:${action.name ?? ""}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }

@@ -12,8 +12,70 @@
  */
 
 import type { ValidationHandler } from "../handlers.js";
-import type { ValidationResult, ValidationError, JsonObject } from "../../../types.js";
+import type { ValidationResult, ValidationError, JsonObject, HandlerContext, JsonValue } from "../../../types.js";
 import { isValidISO8601 } from "../../timestampUtils.js";
+
+/**
+ * Get the list of discovered metric names for the given scope.
+ * Looks in both current turn results and conversation history.
+ * Returns null if describe-metrics was not called for this scope.
+ * Returns empty array if called but no metrics found.
+ * Returns true if called in history but content is unknown.
+ */
+function getDiscoveredMetrics(context: HandlerContext, service?: string): string[] | true | null {
+  const extractMetrics = (toolResult: JsonValue): string[] => {
+    let list: JsonValue = toolResult;
+    // Handle { metrics: [...] } wrapper
+    if (!Array.isArray(list) && list && typeof list === "object" && "metrics" in list) {
+      list = (list as JsonObject).metrics;
+    }
+
+    if (Array.isArray(list)) {
+      return list
+        .map((item) => {
+          if (typeof item === "string") return item;
+          return (item as JsonObject)?.name as string | undefined;
+        })
+        .filter((name): name is string => typeof name === "string");
+    }
+    return [];
+  };
+
+  // Check current turn's tool results (PRIMARY SOURCE)
+  for (const result of context.toolResults) {
+    if (result.name === "describe-metrics") {
+      const resultScope = result.arguments?.scope as JsonObject | undefined;
+      const resultService = resultScope?.service as string | undefined;
+      // Match if both are undefined/null OR both have the same service
+      if ((service === undefined && resultService === undefined) ||
+        (service !== undefined && resultService === service)) {
+        const metrics = extractMetrics(result.result);
+        console.log(`[MetricValidation] Discovered ${metrics.length} metrics for service '${service || "global"}': ${metrics.slice(0, 5).join(", ")}${metrics.length > 5 ? "..." : ""}`);
+        return metrics;
+      }
+    }
+  }
+
+  // Check conversation history (FALLBACK - BLIND)
+  for (const turn of context.conversationHistory) {
+    if (turn.executionTrace) {
+      for (const iteration of turn.executionTrace.iterations) {
+        for (const exec of iteration.toolExecutions) {
+          if (exec.toolName === "describe-metrics" && exec.success) {
+            const execScope = exec.arguments?.scope as JsonObject | undefined;
+            const execService = execScope?.service as string | undefined;
+            if ((service === undefined && execService === undefined) ||
+              (service !== undefined && execService === service)) {
+              return true; // Found in history, trust it.
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return null;
+}
 
 export const metricValidationHandler: ValidationHandler = async (
   context,
@@ -24,6 +86,73 @@ export const metricValidationHandler: ValidationHandler = async (
   const normalizedArgs = { ...toolArgs };
 
   if (toolName === "query-metrics") {
+    // Check if describe-metrics was called first for this scope
+    const scope = toolArgs.scope as JsonObject | undefined;
+    const service = scope?.service as string | undefined;
+
+    const discovered = getDiscoveredMetrics(context, service);
+
+    if (discovered === null) {
+      // Reject the call - describe-metrics must be called first
+      errors.push({
+        field: "expression.metricName",
+        message: `describe-metrics must be called first to discover available metrics${service ? ` for service '${service}'` : ''}`,
+        code: "PREREQUISITE_NOT_MET",
+      });
+      console.log(`[MetricValidation] Rejecting query-metrics: describe-metrics not called for scope ${service || 'global'}`);
+      return {
+        valid: false,
+        errors,
+        replacementCall: {
+          name: "describe-metrics",
+          arguments: { scope: service ? { service } : null },
+        },
+      };
+    }
+
+    // Strict validation if we have the list
+    if (Array.isArray(discovered)) {
+      const expr = toolArgs.expression as JsonObject;
+      const metricName = expr?.metricName as string;
+      if (metricName && !discovered.includes(metricName)) {
+        errors.push({
+          field: "expression.metricName",
+          message: `Metric '${metricName}' not found in discovered metrics. Available: ${discovered.slice(0, 10).join(", ")}${discovered.length > 10 ? "..." : ""}`,
+          code: "INVALID_METRIC_NAME",
+        });
+        console.log(`[MetricValidation] Rejecting query-metrics: '${metricName}' not in usage list.`);
+
+        // Check if describe-metrics was just called (fresh) to avoid infinite loops
+        const isFresh = context.toolResults.some((result) => {
+          if (result.name !== "describe-metrics") return false;
+          const resultScope = result.arguments?.scope as JsonObject | undefined;
+          const resultService = resultScope?.service as string | undefined;
+          // Match if both are undefined/null OR both have the same service
+          return (service === undefined && resultService === undefined) ||
+            (service !== undefined && resultService === service);
+        });
+
+        if (isFresh) {
+          console.log(`[MetricValidation] Not suggesting replacement because describe-metrics was already called in this turn.`);
+          return {
+            valid: false,
+            errors,
+            // Do NOT provide replacementCall -> drops the call, forces LLM (or fallback) to handle error
+          };
+        }
+
+        // Re-suggest describe-metrics to refresh the list/context
+        return {
+          valid: false,
+          errors,
+          replacementCall: {
+            name: "describe-metrics",
+            arguments: { scope: service ? { service } : null },
+          },
+        };
+      }
+    }
+
     // MCP schema: step: z.number().int().positive()
     if (!toolArgs.step) {
       normalizedArgs.step = 60;

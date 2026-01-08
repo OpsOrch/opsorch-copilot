@@ -446,6 +446,7 @@ export class ValidationRegistry {
 
     const allErrors: ValidationError[] = [];
     let normalizedArgs = { ...toolArgs };
+    let replacementCall: ToolCall | undefined;
 
     for (const handler of handlers) {
       try {
@@ -455,6 +456,10 @@ export class ValidationRegistry {
         }
         if (result.normalizedArgs) {
           normalizedArgs = { ...normalizedArgs, ...result.normalizedArgs };
+        }
+        // Capture the first replacement call suggested
+        if (result.replacementCall && !replacementCall) {
+          replacementCall = result.replacementCall;
         }
       } catch (error) {
         console.error(`Validation handler error for ${toolName}:`, error);
@@ -470,6 +475,7 @@ export class ValidationRegistry {
       valid: allErrors.length === 0,
       normalizedArgs: allErrors.length === 0 ? normalizedArgs : undefined,
       errors: allErrors.length > 0 ? allErrors : undefined,
+      replacementCall,
     };
   }
 }
