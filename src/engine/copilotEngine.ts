@@ -482,13 +482,25 @@ export class CopilotEngine {
           plannedCalls,
         )).filter((c) => availableToolNames.has(c.name));
 
-        if (firstIterationFollowUps.length > 0) {
+        // 1. Refine the follow-ups to fill missing/default arguments (like start/end times)
+        const refinedFollowUps = await this.planRefiner.refineCalls(
+          firstIterationFollowUps,
+          this.mcp.getTools(),
+          conversationTurns,
+          allResults,
+        );
+
+        // 2. Ensure total executed calls do not exceed the per-iteration limit
+        const remainingCapacity = Math.max(0, MAX_TOOL_CALLS_PER_ITERATION - plannedCalls.length);
+        const limitedFollowUps = refinedFollowUps.slice(0, remainingCapacity);
+
+        if (limitedFollowUps.length > 0) {
           console.log(
-            `[Copilot][${chatId}] First-iteration follow-ups: ${firstIterationFollowUps.length} call(s): ${firstIterationFollowUps.map((c) => c.name).join(", ")}`,
+            `[Copilot][${chatId}] First-iteration follow-ups (refined/limited): ${limitedFollowUps.length} call(s): ${limitedFollowUps.map((c) => c.name).join(", ")}`,
           );
 
           const followUpResults = await this.runToolCallsWithCache(
-            this.limitToolCalls(firstIterationFollowUps),
+            limitedFollowUps,
             chatId,
             this.mcp.getTools(),
             trace,
