@@ -1,4 +1,4 @@
-import { CopilotAnswer, CopilotAction, CopilotReferences, ToolResult, LlmClient, Correlation, Anomaly, MetricReference, LogReference, MetricExpression, LogExpression, QueryScope } from "../types.js";
+import { CopilotAnswer, CopilotAction, CopilotReferences, ToolResult, LlmClient, LlmMessage, Correlation, Anomaly, MetricReference, LogReference, MetricExpression, LogExpression, QueryScope } from "../types.js";
 import { buildFinalAnswerPrompt } from "../prompts.js";
 import { HandlerUtils } from "./handlers/utils.js";
 import { CorrelationDetector } from "./correlationDetector.js";
@@ -17,6 +17,7 @@ export async function synthesizeCopilotAnswer(
   results: ToolResult[],
   chatId: string,
   llm: LlmClient,
+  conversationHistory: LlmMessage[] = [],
 ): Promise<CopilotAnswer> {
   const fallback = createFallbackAnswer(question, results, chatId);
   if (!results.length) return fallback;
@@ -32,8 +33,12 @@ export async function synthesizeCopilotAnswer(
     // Create a comprehensive prompt for the LLM, including insights
     const prompt = createSynthesisPrompt(question, results, correlations, anomalies);
 
-    // Get LLM analysis
-    const response = await llm.chat([{ role: "user", content: prompt }], []);
+    // Get LLM analysis (include conversation history for multi-turn context)
+    const messages: LlmMessage[] = [
+      ...conversationHistory,
+      { role: "user", content: prompt },
+    ];
+    const response = await llm.chat(messages, []);
 
     if (!response || !response.content) {
       console.warn(`[Copilot][${chatId}] LLM synthesis failed, using fallback`);

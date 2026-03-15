@@ -221,24 +221,15 @@ export class FollowUpEngine {
       "active",
       "investigating",
     ]);
-    const resolvedStatuses = new Set([
-      "resolved",
-      "closed",
-      "mitigated",
-      "remediated",
-    ]);
 
     for (const record of this.collectRecords(result)) {
       const status = record.status;
       if (typeof status === "string") {
         const normalized = status.toLowerCase();
         if (activeStatuses.has(normalized)) return true;
-        if (resolvedStatuses.has(normalized)) continue;
-        return true;
+        // Unknown or resolved statuses are not considered active
       }
-      if (record.id) {
-        return true;
-      }
+      // Records without a status are not considered active
     }
 
     return false;
@@ -246,7 +237,6 @@ export class FollowUpEngine {
 
   private hasActiveAlert(result: JsonValue): boolean {
     const activeStatuses = new Set(["firing", "acknowledged", "triggered", "open"]);
-    const resolvedStatuses = new Set(["resolved", "closed", "cleared"]);
     for (const record of this.collectRecords(result)) {
       const status = record.status;
       if (typeof status === "string") {
@@ -254,14 +244,9 @@ export class FollowUpEngine {
         if (activeStatuses.has(normalized)) {
           return true;
         }
-        if (resolvedStatuses.has(normalized)) {
-          continue;
-        }
-        return true;
+        // Unknown or resolved statuses are not considered active
       }
-      if (record.id) {
-        return true;
-      }
+      // Records without a status are not considered active
     }
     return false;
   }

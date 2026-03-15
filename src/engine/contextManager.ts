@@ -90,40 +90,35 @@ export function fitMessagesInContext(
     return messages; // Fits, no truncation needed
   }
 
-  // Separate messages by type
+  // Separate system messages (always kept, highest priority)
   const systemMessages = messages.filter((m) => m.role === "system");
-  const userMessages = messages.filter((m) => m.role === "user");
+  const nonSystemMessages = messages.filter((m) => m.role !== "system");
 
-  // Always keep system messages (highest priority)
+  // Always keep system messages
   const result: LlmMessage[] = [...systemMessages];
   let budget =
     config.maxContextTokens -
     systemMessages.reduce((sum, msg) => sum + estimateTokens(msg.content), 0);
 
-  // Keep most recent user message (critical for context)
-  const lastUserMessage = userMessages[userMessages.length - 1];
-  if (lastUserMessage) {
-    result.push(lastUserMessage);
-    budget -= estimateTokens(lastUserMessage.content);
-  }
+  // Keep most recent messages first (regardless of role: user, assistant, tool)
+  // Work backwards from most recent to fill budget
+  const reversedNonSystem = [...nonSystemMessages].reverse();
 
-  // Add recent messages with remaining budget
-  const recentMessages = messages
-    .slice(-3)
-    .filter((m) => m.role !== "system" && m !== lastUserMessage);
-
-  for (const msg of recentMessages) {
+  for (const msg of reversedNonSystem) {
     const tokens = estimateTokens(msg.content);
     if (tokens <= budget) {
       result.push(msg);
       budget -= tokens;
     } else if (budget > 100) {
-      // Truncate this message to fit
+      // Truncate this message to fit remaining budget
       const truncated = {
         ...msg,
         content: truncateToTokens(msg.content, budget),
       };
       result.push(truncated);
+      budget = 0;
+      break;
+    } else {
       break;
     }
   }

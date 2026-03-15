@@ -178,56 +178,34 @@ export class ScopeInferer {
         return scope.service;
       }
 
-      // Service from first item in arrays using MCP schema fields
+      // Service from items in arrays using MCP schema fields
+      // Only infer if ALL items share the same service (avoids narrowing multi-service results)
       // incidents, alerts, logs use: service field
       // services use: name field
-      if (Array.isArray(obj.incidents) && obj.incidents.length > 0) {
-        const first = obj.incidents[0];
-        if (first && typeof first === "object" && !Array.isArray(first)) {
-          const firstObj = first as JsonObject;
-          if (firstObj.service && typeof firstObj.service === "string") {
-            return firstObj.service;
-          }
-        }
-      }
+      const arrayFields: Array<{ key: string; serviceField: string }> = [
+        { key: "incidents", serviceField: "service" },
+        { key: "alerts", serviceField: "service" },
+        { key: "logs", serviceField: "service" },
+        { key: "services", serviceField: "name" },
+        { key: "metrics", serviceField: "service" },
+      ];
 
-      if (Array.isArray(obj.alerts) && obj.alerts.length > 0) {
-        const first = obj.alerts[0];
-        if (first && typeof first === "object" && !Array.isArray(first)) {
-          const firstObj = first as JsonObject;
-          if (firstObj.service && typeof firstObj.service === "string") {
-            return firstObj.service;
+      for (const { key, serviceField } of arrayFields) {
+        const arr = obj[key];
+        if (Array.isArray(arr) && arr.length > 0) {
+          const services = new Set<string>();
+          for (const item of arr) {
+            if (item && typeof item === "object" && !Array.isArray(item)) {
+              const itemObj = item as JsonObject;
+              const svc = itemObj[serviceField];
+              if (typeof svc === "string") {
+                services.add(svc);
+              }
+            }
           }
-        }
-      }
-
-      if (Array.isArray(obj.logs) && obj.logs.length > 0) {
-        const first = obj.logs[0];
-        if (first && typeof first === "object" && !Array.isArray(first)) {
-          const firstObj = first as JsonObject;
-          if (firstObj.service && typeof firstObj.service === "string") {
-            return firstObj.service;
-          }
-        }
-      }
-
-      // Services are extracted by name field (MCP serviceSchema)
-      if (Array.isArray(obj.services) && obj.services.length > 0) {
-        const first = obj.services[0];
-        if (first && typeof first === "object" && !Array.isArray(first)) {
-          const firstObj = first as JsonObject;
-          if (firstObj.name && typeof firstObj.name === "string") {
-            return firstObj.name;
-          }
-        }
-      }
-
-      if (Array.isArray(obj.metrics) && obj.metrics.length > 0) {
-        const first = obj.metrics[0];
-        if (first && typeof first === "object" && !Array.isArray(first)) {
-          const firstObj = first as JsonObject;
-          if (firstObj.service && typeof firstObj.service === "string") {
-            return firstObj.service;
+          // Only infer scope if exactly one service is present across all items
+          if (services.size === 1) {
+            return [...services][0];
           }
         }
       }
@@ -326,13 +304,13 @@ export class ScopeInferer {
   applyScope(calls: ToolCall[], inference: ScopeInference): ToolCall[] {
     return calls.map((call) => {
       // Only apply scope to tools that commonly use scope
-      const scopeTools = [
+      const scopeTools = new Set([
         "query-logs",
         "query-metrics",
         "query-incidents",
         "query-alerts",
-      ];
-      if (!scopeTools.some((tool) => call.name.includes(tool.split("-")[1]))) {
+      ]);
+      if (!scopeTools.has(call.name)) {
         return call;
       }
 

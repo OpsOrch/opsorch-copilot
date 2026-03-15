@@ -119,3 +119,50 @@ test('summarizes conversation for logging', () => {
     assert.ok(summary.includes('2 user messages'));
     assert.ok(summary.includes('1 assistant'));
 });
+
+test('fitMessagesInContext retains tool messages when within budget', () => {
+    const messages: LlmMessage[] = [
+        { role: 'system', content: 'You are a helper.' },
+        { role: 'user', content: 'question' },
+        { role: 'tool', content: 'tool result data' },
+        { role: 'assistant', content: 'here is my analysis' },
+        { role: 'user', content: 'follow up question' },
+    ];
+
+    const fitted = fitMessagesInContext(messages, {
+        maxContextTokens: 10000,
+        systemPriority: 1.0,
+        recentPriority: 0.8,
+        olderPriority: 0.3,
+    });
+
+    assert.equal(fitted.length, 5, 'All messages should fit');
+    assert.ok(fitted.some(m => m.role === 'tool'), 'Tool messages should be retained');
+    assert.ok(fitted.some(m => m.role === 'assistant'), 'Assistant messages should be retained');
+});
+
+test('fitMessagesInContext keeps recent tool/assistant messages under tight budget', () => {
+    const messages: LlmMessage[] = [
+        { role: 'system', content: 'sys' },
+        { role: 'user', content: 'old question ' + 'x'.repeat(500) },
+        { role: 'tool', content: 'old tool result ' + 'y'.repeat(500) },
+        { role: 'assistant', content: 'old answer ' + 'z'.repeat(500) },
+        { role: 'user', content: 'recent question' },
+        { role: 'tool', content: 'recent tool result' },
+        { role: 'assistant', content: 'recent answer' },
+    ];
+
+    const fitted = fitMessagesInContext(messages, {
+        maxContextTokens: 60,
+        systemPriority: 1.0,
+        recentPriority: 0.8,
+        olderPriority: 0.3,
+    });
+
+    assert.ok(fitted.some(m => m.role === 'system'));
+    const hasRecentTool = fitted.some(m => m.content.includes('recent tool'));
+    const hasRecentAnswer = fitted.some(m => m.content.includes('recent answer'));
+    const hasRecentQuestion = fitted.some(m => m.content.includes('recent question'));
+    assert.ok(hasRecentQuestion || hasRecentTool || hasRecentAnswer,
+        'At least some recent messages should be kept');
+});

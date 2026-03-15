@@ -159,4 +159,60 @@ test('FollowUpEngine', async (t) => {
 
         assert.strictEqual(toolServiceKeys.length, uniqueKeys.size, 'Should have no duplicate tool+service combinations');
     });
+
+    await t.test('resolved incidents do not trigger orchestration plan suggestions', async () => {
+        const results: ToolResult[] = [
+            {
+                name: 'query-incidents',
+                result: [{ id: 'INC-001', service: 'payments', status: 'resolved' }],
+                arguments: {},
+            },
+        ];
+
+        const suggestions = await engine.applyFollowUps(results, 'test', [], 'show me services');
+        const orchestrationCalls = suggestions.filter(c => c.name === 'query-orchestration-plans');
+        assert.strictEqual(orchestrationCalls.length, 0, 'Resolved incidents should not trigger orchestration plans');
+    });
+
+    await t.test('incidents with unknown status do not trigger problem detection', async () => {
+        const results: ToolResult[] = [
+            {
+                name: 'query-incidents',
+                result: [{ id: 'INC-002', service: 'payments', status: 'postmortem' }],
+                arguments: {},
+            },
+        ];
+
+        const suggestions = await engine.applyFollowUps(results, 'test', [], 'list recent entries');
+        const orchestrationCalls = suggestions.filter(c => c.name === 'query-orchestration-plans');
+        assert.strictEqual(orchestrationCalls.length, 0, 'Unknown statuses should not trigger orchestration lookups');
+    });
+
+    await t.test('explicitly active incidents still trigger problem detection', async () => {
+        const results: ToolResult[] = [
+            {
+                name: 'query-incidents',
+                result: [{ id: 'INC-003', service: 'payments', status: 'triggered' }],
+                arguments: {},
+            },
+        ];
+
+        const suggestions = await engine.applyFollowUps(results, 'test', [], 'what is happening?');
+        const orchestrationCalls = suggestions.filter(c => c.name === 'query-orchestration-plans');
+        assert.ok(orchestrationCalls.length > 0, 'Explicitly active incidents should still trigger orchestration plans');
+    });
+
+    await t.test('cleared alerts do not trigger problem detection', async () => {
+        const results: ToolResult[] = [
+            {
+                name: 'query-alerts',
+                result: [{ id: 'ALT-001', service: 'api', status: 'cleared' }],
+                arguments: {},
+            },
+        ];
+
+        const suggestions = await engine.applyFollowUps(results, 'test', [], 'show me the dashboard');
+        const orchestrationCalls = suggestions.filter(c => c.name === 'query-orchestration-plans');
+        assert.strictEqual(orchestrationCalls.length, 0, 'Cleared alerts should not trigger orchestration plans');
+    });
 });

@@ -326,3 +326,102 @@ test('ScopeInferer: detects multiple team references', async () => {
   }
 });
 
+test('ScopeInferer: applyScope only matches exact query tool names', () => {
+  const inferer = new ScopeInferer();
+  const inference = {
+    scope: { service: 'payment-api' },
+    confidence: 0.8,
+    source: 'incident' as const,
+    reason: 'test',
+  };
+
+  const calls = [
+    { name: 'query-logs', arguments: {} },
+    { name: 'query-metrics', arguments: {} },
+    { name: 'query-incidents', arguments: {} },
+    { name: 'query-alerts', arguments: {} },
+    { name: 'get-incident', arguments: {} },
+    { name: 'get-incident-timeline', arguments: {} },
+    { name: 'query-tickets', arguments: {} },
+    { name: 'get-service', arguments: {} },
+  ];
+
+  const updated = inferer.applyScope(calls, inference);
+
+  // First 4 should have scope injected
+  for (const call of updated.slice(0, 4)) {
+    const scope = (call.arguments as JsonObject)?.scope as JsonObject | undefined;
+    assert.equal(scope?.service, 'payment-api', `${call.name} should get scope`);
+  }
+
+  // Last 4 should NOT have scope injected
+  for (const call of updated.slice(4)) {
+    const scope = (call.arguments as JsonObject)?.scope as JsonObject | undefined;
+    assert.equal(scope, undefined, `${call.name} should NOT get scope`);
+  }
+});
+
+test('ScopeInferer: does not narrow scope when result items have different services', () => {
+  const inferer = new ScopeInferer();
+
+  const calls = [{ name: 'query-logs', arguments: {} }];
+
+  // When inferFromResults returns no service (multi-service), applyScope should not inject one
+  const noServiceInference = {
+    scope: {} as { service?: string },
+    confidence: 0.75,
+    source: 'previous_query' as const,
+    reason: 'test',
+  };
+
+  const updated = inferer.applyScope(calls, noServiceInference);
+  const scope = (updated[0].arguments as JsonObject)?.scope as JsonObject | undefined;
+  assert.equal(scope, undefined, 'No scope should be applied when no service was inferred');
+});
+
+test('ScopeInferer: infers scope when all log items share same service', async () => {
+  const inferer = new ScopeInferer();
+
+  const results: ToolResult[] = [
+    {
+      name: 'query-logs',
+      result: {
+        logs: [
+          { id: 'log-1', service: 'payment-api' },
+          { id: 'log-2', service: 'payment-api' },
+        ],
+      },
+    },
+  ];
+
+  const inference = await inferer.inferScope('what happened?', results);
+
+  assert.ok(inference, 'Should infer scope when all items share the same service');
+  assert.equal(inference.scope.service, 'payment-api');
+});
+
+test('ScopeInferer: does not narrow multi-service log results', async () => {
+  const inferer = new ScopeInferer();
+
+  const results: ToolResult[] = [
+    {
+      name: 'query-logs',
+      result: {
+        logs: [
+          { id: 'log-1', service: 'api-gateway' },
+          { id: 'log-2', service: 'auth-service' },
+        ],
+      },
+    },
+  ];
+
+  const inference = await inferer.inferScope('show me logs', results);
+
+  if (inference?.scope.service) {
+    assert.ok(
+      inference.scope.service !== 'api-gateway' && inference.scope.service !== 'auth-service',
+      `Should not pick one service from multi-service results, got: ${inference.scope.service}`,
+    );
+  }
+});
+

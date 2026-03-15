@@ -310,3 +310,30 @@ test('ReferenceResolver: uses prominence as tiebreaker when timestamps are equal
   const resolved = resolutions.get('that incident');
   assert.equal(resolved, 'inc-005');
 });
+
+test('ReferenceResolver: extracts patterns from original-case question', async () => {
+  const resolver = new ReferenceResolver(referenceRegistry);
+  const context: ConversationContext = {
+    chatId: 'test-chat',
+    entities: new Map(),
+  };
+
+  // The question has mixed casing — extraction should work without crashing
+  const resolutions = await resolver.resolveReferences(
+    'What about That Incident?',
+    context,
+    [],
+  );
+
+  assert.ok(resolutions instanceof Map);
+});
+
+test('ReferenceResolver: applyResolutions works case-insensitively on original text', () => {
+  const resolver = new ReferenceResolver(referenceRegistry);
+  const resolutions = new Map<string, string>();
+  resolutions.set('That Incident', 'INC-1234');
+
+  const result = resolver.applyResolutions('Tell me about That Incident please', resolutions);
+  assert.ok(result.includes('INC-1234'));
+  assert.ok(!result.includes('That Incident'));
+});
