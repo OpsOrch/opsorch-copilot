@@ -168,6 +168,7 @@ function createFollowUpRegistry(): FollowUpRegistry {
 
   registry.register("query-logs", logFollowUpHandler);
 
+  registry.register("describe-metrics", metricFollowUpHandler);
   registry.register("query-metrics", metricFollowUpHandler);
 
   registry.register("query-tickets", ticketFollowUpHandler);
@@ -183,7 +184,7 @@ function createFollowUpRegistry(): FollowUpRegistry {
   registry.register("get-orchestration-plan", orchestrationFollowUpHandler);
 
   console.log(
-    "[FollowUpRegistry] Registered 17 follow-up handlers for 9 capabilities",
+    "[FollowUpRegistry] Registered 18 follow-up handlers for 9 capabilities",
   );
 
   return registry;

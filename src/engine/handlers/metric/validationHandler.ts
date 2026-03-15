@@ -87,68 +87,51 @@ export const metricValidationHandler: ValidationHandler = async (
 
   if (toolName === "query-metrics") {
     // Check if describe-metrics was called first for this scope
-    const scope = toolArgs.scope as JsonObject | undefined;
-    const service = scope?.service as string | undefined;
+    const scopeArg = toolArgs.scope as { service?: string } | undefined;
+    const service = scopeArg?.service;
+    const discoveredMetrics = getDiscoveredMetrics(context, service);
 
-    const discovered = getDiscoveredMetrics(context, service);
-
-    if (discovered === null) {
-      // Reject the call - describe-metrics must be called first
-      errors.push({
-        field: "expression.metricName",
-        message: `describe-metrics must be called first to discover available metrics${service ? ` for service '${service}'` : ''}`,
-        code: "PREREQUISITE_NOT_MET",
-      });
-      console.log(`[MetricValidation] Rejecting query-metrics: describe-metrics not called for scope ${service || 'global'}`);
+    if (discoveredMetrics === null) {
       return {
         valid: false,
-        errors,
+        errors: [
+          {
+            field: "prerequisite",
+            message: `describe-metrics must be called before query-metrics for scope '${service || "global"}'`,
+            code: "PREREQUISITE_NOT_MET",
+          },
+        ],
         replacementCall: {
           name: "describe-metrics",
-          arguments: { scope: service ? { service } : null },
+          arguments: service ? { scope: { service } } : { scope: null },
         },
       };
     }
 
-    // Strict validation if we have the list
-    if (Array.isArray(discovered)) {
-      const expr = toolArgs.expression as JsonObject;
-      const metricName = expr?.metricName as string;
-      if (metricName && !discovered.includes(metricName)) {
-        errors.push({
-          field: "expression.metricName",
-          message: `Metric '${metricName}' not found in discovered metrics. Available: ${discovered.slice(0, 10).join(", ")}${discovered.length > 10 ? "..." : ""}`,
-          code: "INVALID_METRIC_NAME",
-        });
-        console.log(`[MetricValidation] Rejecting query-metrics: '${metricName}' not in usage list.`);
-
-        // Check if describe-metrics was just called (fresh) to avoid infinite loops
-        const isFresh = context.toolResults.some((result) => {
-          if (result.name !== "describe-metrics") return false;
-          const resultScope = result.arguments?.scope as JsonObject | undefined;
-          const resultService = resultScope?.service as string | undefined;
-          // Match if both are undefined/null OR both have the same service
-          return (service === undefined && resultService === undefined) ||
-            (service !== undefined && resultService === service);
-        });
-
-        if (isFresh) {
-          console.log(`[MetricValidation] Not suggesting replacement because describe-metrics was already called in this turn.`);
-          return {
-            valid: false,
-            errors,
-            // Do NOT provide replacementCall -> drops the call, forces LLM (or fallback) to handle error
-          };
-        }
-
-        // Re-suggest describe-metrics to refresh the list/context
+    // If we have a specific list of discovered metrics, validate or auto-populate the metric name
+    if (Array.isArray(discoveredMetrics) && discoveredMetrics.length > 0) {
+      const expr = toolArgs.expression as { metricName?: string } | undefined;
+      if (expr?.metricName && !discoveredMetrics.includes(expr.metricName)) {
         return {
           valid: false,
-          errors,
-          replacementCall: {
-            name: "describe-metrics",
-            arguments: { scope: service ? { service } : null },
-          },
+          errors: [
+            {
+              field: "expression.metricName",
+              message: `Metric '${expr.metricName}' was not found in describe-metrics results. Available: ${discoveredMetrics.slice(0, 5).join(", ")}`,
+              code: "INVALID_METRIC_NAME",
+            },
+          ],
+          // Do NOT suggest describe-metrics again if it was already called in this turn
+          replacementCall: undefined,
+        };
+      }
+      // Auto-populate expression.metricName from discovered metrics if missing
+      if (!expr?.metricName) {
+        normalizedArgs.expression = {
+          ...(typeof normalizedArgs.expression === "object" && normalizedArgs.expression !== null
+            ? normalizedArgs.expression as JsonObject
+            : {}),
+          metricName: discoveredMetrics[0],
         };
       }
     }

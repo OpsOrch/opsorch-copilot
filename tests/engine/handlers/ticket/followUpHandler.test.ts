@@ -105,9 +105,11 @@ test('ticketFollowUpHandler', async (t) => {
             conversationHistory: [{
                 userMessage: 'previous question',
                 timestamp: Date.now() - 1000,
-                toolResults: [{
-                    name: 'query-tickets',
-                    result: [{ id: 'TICKET-1', title: 'Already seen ticket' }],
+                entities: [{
+                    type: 'ticket' as const,
+                    value: 'TICKET-1',
+                    extractedAt: Date.now() - 1000,
+                    source: 'query-tickets'
                 }]
             }]
         };

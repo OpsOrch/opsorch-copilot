@@ -86,20 +86,23 @@ export function validateToolCall(
       const propSchema = properties[key] as JsonObject | undefined;
       if (!propSchema) continue; // Unknown property, skip
 
-      const expectedType = propSchema.type as string | undefined;
+      const rawExpectedType = propSchema.type as string | string[] | undefined;
+      const expectedTypes = Array.isArray(rawExpectedType) ? rawExpectedType : (rawExpectedType ? [rawExpectedType] : []);
       const actualType = Array.isArray(value) ? "array" : typeof value;
 
       // Special handling for integer: JavaScript typeof returns 'number' for all numbers
-      const typesMatch =
-        expectedType === actualType ||
-        (expectedType === "integer" && actualType === "number");
+      const typesMatch = expectedTypes.length === 0 || expectedTypes.some(t =>
+        t === actualType || (t === "integer" && actualType === "number")
+      );
 
-      if (expectedType && !typesMatch) {
+      if (!typesMatch) {
         errors.push(
-          `Field '${key}' has type ${actualType}, expected ${expectedType}`,
+          `Field '${key}' has type ${actualType}, expected ${expectedTypes.join(",")}`,
         );
         continue; // Skip further validation if type is wrong
       }
+
+      const expectedType = expectedTypes.find(t => t !== "null");
 
       // Timestamp validation for common time fields
       if (
@@ -195,8 +198,8 @@ export function validateToolCall(
         const rawValue = rawArgs[key];
         const rawObj =
           typeof rawValue === "object" &&
-          rawValue !== null &&
-          !Array.isArray(rawValue)
+            rawValue !== null &&
+            !Array.isArray(rawValue)
             ? (rawValue as JsonObject)
             : undefined;
         const nestedResult = validateObject(value as JsonObject, propSchema, rawObj);
@@ -257,12 +260,17 @@ function validateObject(
     const propSchema = properties[key] as JsonObject | undefined;
     if (!propSchema) continue;
 
-    const expectedType = propSchema.type as string | undefined;
+    const rawExpectedType = propSchema.type as string | string[] | undefined;
+    const expectedTypes = Array.isArray(rawExpectedType) ? rawExpectedType : (rawExpectedType ? [rawExpectedType] : []);
     const actualType = Array.isArray(value) ? "array" : typeof value;
 
-    if (expectedType && expectedType !== actualType) {
+    const typesMatch = expectedTypes.length === 0 || expectedTypes.some(t =>
+      t === actualType || (t === "integer" && actualType === "number")
+    );
+
+    if (!typesMatch) {
       errors.push(
-        `Field '${key}' has type ${actualType}, expected ${expectedType}`,
+        `Field '${key}' has type ${actualType}, expected ${expectedTypes.join(",")}`,
       );
     }
   }

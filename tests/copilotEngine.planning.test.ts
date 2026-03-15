@@ -347,6 +347,9 @@ test('validates invalid LLM calls and provides heuristic fallback', async () => 
     async listTools() {
       return [
         {
+          name: 'describe-metrics',
+        } as Tool,
+        {
           name: 'query-metrics',
           inputSchema: {
             type: 'object',
@@ -367,6 +370,9 @@ test('validates invalid LLM calls and provides heuristic fallback', async () => 
     },
     async callTool(call) {
       calls.push(call);
+      if (call.name === 'describe-metrics') {
+        return { name: call.name, result: ['cpu_usage'] };
+      }
       return { name: call.name, result: { metrics: [] } };
     },
   };
@@ -374,15 +380,13 @@ test('validates invalid LLM calls and provides heuristic fallback', async () => 
   const engine = makeEngine(llm, mcp);
   await engine.answer('check cpu metrics');
 
-  // New behavior: Invalid LLM call is caught, but heuristics inject a valid fallback
-  console.log('DEBUG: calls length:', calls.length);
-  if (calls.length > 0) console.log('DEBUG: first call:', calls[0]);
-
-  assert.equal(calls.length, 1, 'heuristics should inject valid query-metrics call after filtering invalid LLM call');
-  assert.equal(calls[0].name, 'query-metrics');
+  // describe-metrics runs first (replacing the invalid query-metrics call),
+  // then heuristics inject a valid query-metrics call
+  const metricsCall = calls.find(c => c.name === 'query-metrics');
+  assert.ok(metricsCall, 'heuristics should inject valid query-metrics call after filtering invalid LLM call');
 
   // The heuristic-injected call should have all required fields
-  const args = calls[0].arguments as JsonObject;
+  const args = metricsCall!.arguments as JsonObject;
   assert.ok(args.expression, 'should have expression field');
   assert.ok(typeof args.step === 'number', 'should have step field');
   assert.ok(args.start, 'should have start field');
@@ -458,8 +462,15 @@ test('filters out internal diagnostic tools from LLM visibility', async () => {
 
 test('adds default logs and metrics calls when user explicitly asks for them', async () => {
   const llm: LlmClient = {
-    async chat(_messages: LlmMessage[] = [], tools: Tool[] = [], _opts?: { chatId?: string }) {
+    async chat(messages: LlmMessage[], tools: Tool[], _opts?: { chatId?: string }) {
       if (tools.length) {
+        // On follow-up, if describe-metrics results are visible, plan query-metrics
+        const hasDescribeMetricsResult = messages.some(m =>
+          m.role === 'user' && typeof m.content === 'string' && m.content.includes('describe-metrics')
+        );
+        if (hasDescribeMetricsResult) {
+          return { content: 'plan', toolCalls: [{ name: 'query-metrics', arguments: { expression: { metricName: 'cpu_usage' }, step: 60 } }], chatId: 'conv-default-logs' };
+        }
         return { content: 'plan', toolCalls: [], chatId: 'conv-default-logs' };
       }
       return { content: JSON.stringify({ conclusion: 'done' }), toolCalls: [], chatId: 'conv-default-logs' };
@@ -469,11 +480,14 @@ test('adds default logs and metrics calls when user explicitly asks for them', a
   const calls: ToolCall[] = [];
   const mcp: StubMcp = {
     async listTools() {
-      return [{ name: 'query-logs' } as Tool, { name: 'query-metrics' } as Tool];
+      return [{ name: 'describe-metrics' } as Tool, { name: 'query-logs' } as Tool, { name: 'query-metrics' } as Tool];
     },
     async callTool(call) {
       console.log('Test callTool:', call.name);
       calls.push(call);
+      if (call.name === 'describe-metrics') {
+        return { name: call.name, result: ['cpu_usage'] };
+      }
       return { name: call.name, result: { ok: true } };
     },
   };
@@ -483,9 +497,9 @@ test('adds default logs and metrics calls when user explicitly asks for them', a
 
   console.log('Calls length:', calls.length);
   console.log('Calls:', calls.map(c => c.name));
-  assert.equal(calls.length, 2);
-  const toolNames = calls.map(c => c.name).sort();
-  assert.deepEqual(toolNames, ['query-logs', 'query-metrics']);
+  const toolNames = calls.map(c => c.name);
+  assert.ok(toolNames.includes('query-logs'), 'should call query-logs');
+  assert.ok(toolNames.includes('query-metrics'), 'should call query-metrics');
 
   const logsCall = calls.find(c => c.name === 'query-logs');
   const metricsCall = calls.find(c => c.name === 'query-metrics');

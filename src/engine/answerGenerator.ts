@@ -163,6 +163,12 @@ function extractReferencesFromResults(results: ToolResult[]): CopilotReferences 
       extractLogReferences(result, refs.logs);
     }
 
+    // Extract team IDs
+    if (result.name.includes('team')) {
+      refs.teams = refs.teams || [];
+      extractTeamIds(result.result, refs.teams);
+    }
+
     // Extract orchestration plan IDs
     if (result.name.includes('orchestration')) {
       refs.orchestrationPlans = refs.orchestrationPlans || [];
@@ -176,6 +182,7 @@ function extractReferencesFromResults(results: ToolResult[]): CopilotReferences 
   if (refs.alerts) refs.alerts = [...new Set(refs.alerts)];
   if (refs.deployments) refs.deployments = [...new Set(refs.deployments)];
   if (refs.tickets) refs.tickets = [...new Set(refs.tickets)];
+  if (refs.teams) refs.teams = [...new Set(refs.teams)];
   // Metrics and logs are complex objects, dedupe by JSON string
   if (refs.metrics) refs.metrics = dedupeByJson(refs.metrics);
   if (refs.logs) refs.logs = dedupeByJson(refs.logs);
@@ -320,6 +327,31 @@ function extractTicketIds(data: unknown, ids: string[]): void {
           const t = ticket as Record<string, unknown>;
           if ('id' in t) ids.push(String(t.id));
           else if ('key' in t) ids.push(String(t.key));
+        }
+      }
+    }
+  }
+}
+
+function extractTeamIds(data: unknown, ids: string[]): void {
+  if (Array.isArray(data)) {
+    for (const item of data) {
+      if (typeof item === 'object' && item !== null) {
+        const obj = item as Record<string, unknown>;
+        if ('id' in obj) ids.push(String(obj.id));
+        else if ('name' in obj) ids.push(String(obj.name));
+      }
+    }
+  } else if (typeof data === 'object' && data !== null) {
+    const obj = data as Record<string, unknown>;
+    if ('id' in obj) ids.push(String(obj.id));
+    else if ('name' in obj) ids.push(String(obj.name));
+    if (Array.isArray(obj.teams)) {
+      for (const team of obj.teams) {
+        if (typeof team === 'object' && team !== null) {
+          const t = team as Record<string, unknown>;
+          if ('id' in t) ids.push(String(t.id));
+          else if ('name' in t) ids.push(String(t.name));
         }
       }
     }

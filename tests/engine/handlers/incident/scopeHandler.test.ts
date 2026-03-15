@@ -75,14 +75,13 @@ test('incidentScopeInferenceHandler', async (t) => {
         const testContext = {
             ...context,
             conversationHistory: [{
-                role: 'assistant',
-                content: '',
-                userMessage: '',
+                userMessage: 'previous question',
                 timestamp: Date.now(),
-                toolResults: [{
-                    name: 'query-incidents',
-                    arguments: {},
-                    result: [{ id: '1', service: 'legacy-api', metadata: { environment: 'staging' } }]
+                entities: [{
+                    type: 'service' as const,
+                    value: 'legacy-api',
+                    extractedAt: Date.now(),
+                    source: 'query-incidents'
                 }]
             }],
             toolResults: []
@@ -92,7 +91,6 @@ test('incidentScopeInferenceHandler', async (t) => {
 
         assert.ok(result);
         assert.equal(result?.service, 'legacy-api');
-        assert.equal(result?.environment, 'staging');
     });
 
     await t.test('ignores non-incident tools', async () => {

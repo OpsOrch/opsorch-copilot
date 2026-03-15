@@ -156,6 +156,26 @@ export const incidentScopeInferenceHandler: ScopeHandler = async (
 
   // Note: We no longer look at conversation history toolResults since they're not stored.
   // Scope from previous turns should be inferred from entities or the current turn's results.
+  if (!hasScope || !(scope.service && scope.environment && scope.team)) {
+    for (let i = context.conversationHistory.length - 1; i >= 0; i--) {
+      const turn = context.conversationHistory[i];
+      if (turn.entities) {
+        for (const entity of turn.entities) {
+          if (entity.type === "service" && !scope.service) {
+            scope.service = entity.value;
+            hasScope = true;
+          }
+          if (entity.type === "team" && !scope.team) {
+            scope.team = entity.value;
+            hasScope = true;
+          }
+        }
+      }
+      if (scope.service && scope.environment && scope.team) {
+        break;
+      }
+    }
+  }
 
   return hasScope ? scope : null;
 };

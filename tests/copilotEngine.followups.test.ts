@@ -107,12 +107,16 @@ test('emits references instead of links with ids and ranges for console', async 
     async listTools() {
       console.log('StubMcp listTools called');
       return [
+        { name: 'describe-metrics' } as Tool,
         { name: 'query-logs' } as Tool,
         { name: 'query-metrics' } as Tool,
       ];
     },
     async callTool(call) {
       calls.push(call);
+      if (call.name === 'describe-metrics') {
+        return { name: call.name, result: ['latency_p95'] };
+      }
       if (call.name === 'query-logs') {
         return { name: call.name, result: [{ id: 'log-1', message: 'error' }] } as ToolResult;
       }
@@ -189,12 +193,16 @@ test('drills into incident timelines/logs/metrics when user asks for root cause'
       return [
         { name: 'query-incidents' } as Tool,
         { name: 'get-incident-timeline' } as Tool,
+        { name: 'describe-metrics' } as Tool,
         { name: 'query-logs' } as Tool,
         { name: 'query-metrics' } as Tool,
       ];
     },
     async callTool(call): Promise<ToolResult> {
       calls.push(call);
+      if (call.name === 'describe-metrics') {
+        return { name: call.name, result: ['cpu_usage'] };
+      }
       if (call.name === 'query-incidents') {
         return {
           name: call.name,
