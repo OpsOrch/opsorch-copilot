@@ -35,7 +35,7 @@ Capabilities implement specialized handlers from this set (11 types total):
 | **Intent** | Classifies user intent and detects keywords | `IntentRegistry` |
 | **Entity** | Extracts structured entities (IDs, references) from tool results | `EntityRegistry` |
 | **Follow-up** | Suggests relevant follow-up tool calls based on results | `FollowUpRegistry` |
-| **Validation** | Validates and normalizes tool call arguments | `ValidationRegistry` |
+| **Validation** | Validates and normalizes tool call arguments, and proposes replacement tools and arguments when invalid | `ValidationRegistry` |
 | **Scope** | Infers query scope (service, environment, team) from context | `ScopeRegistry`, `ScopeInferenceRegistry` |
 | **Reference** | Resolves pronouns like "that incident" to specific entity values | `ReferenceRegistry` |
 | **Correlation** | Detects correlations between events (incidents, logs, metrics) | `CorrelationRegistry` |
@@ -54,7 +54,8 @@ flowchart LR
     AD --> CD[Correlation Detection]
     CD --> FU[Follow-up Generation]
     FU --> SI[Scope Inference]
-    SI --> Next[Next Tool Preparation]
+    SI --> PR[Plan Refinement]
+    PR --> Next[Next Tool Preparation]
 ```
 
 1. **Entity Extraction**: Capability-specific entity handlers extract relevant entities (IDs, timestamps, service names)
@@ -63,6 +64,7 @@ flowchart LR
 4. **Correlation Detection**: Cross-domain handlers detect correlations between events
 5. **Follow-up Generation**: Follow-up handlers suggest intelligent next actions based on tool results
 6. **Scope Inference**: Scope handlers infer query scope for subsequent tool calls
+7. **Plan Refinement**: Validation, heuristic missing-tool injection, deduplication, and scope application against planned tools
 
 ### Registries
 
@@ -131,8 +133,8 @@ flowchart TD
         GC --> P[Planner]
         P -->|requestInitialPlan| IP[Initial Plan]
         IP --> TC[Tool Calls]
-        TC --> VAL[Validate Tool Calls]
-        VAL -->|Skip invalid| FC[Filter Calls]
+        TC --> PR[Plan Refiner]
+        PR -->|Validate, Replace, Scope, Add Missing Tools| FC[Filter Calls]
         FC --> CACHE[Check ResultCache]
         CACHE -->|Hit| SKIP[Skip Execution]
         CACHE -->|Miss| EXEC[Execute via MCP]
@@ -169,7 +171,13 @@ flowchart TD
    - Tool calls limited to 3 per planning request
 
 3. **Tool Execution Loop** (max 3 iterations)
-   - **Validation**: Check required fields, skip calls with placeholder args `{{...}}`
+   - **Plan Refinement Process (`planRefiner.ts`)**:
+     - **Schema Validation & Null Stripping (`toolsSchema.ts`)**: Recursively strips `null` and `undefined` arguments so LLMs can safely omit optional parameters. Enforces strict schema rules via JSON type checking and common patterns (e.g., ISO8601 timestamps).
+     - **Validation & Replacement (`ValidationRegistry`)**: Automatically normalizes invalid arguments into valid states or proposes entirely new replacement tools with corrected arguments.
+     - **Deduplication**: Eliminates repetitive loop cycles by ignoring any newly suggested tools that have the precise same name and exact arguments as ones already executed inside the iteration or history trace.
+     - **Missing Tools Heuristic (Intent Injection)**: If the LLM produces a plan with 0 tools, the refiner queries `IntentRegistry` to heuristically inject tools into the execution flow. It maps intent directly to required arguments via `QueryBuilderRegistry` without LLM mediation. 
+     - **Scope Application**: Distributes inferred scopes (e.g. current team or service tier) from `scopeInferer.ts` down to the augmented tool list.
+   - **Validation**: Checks required fields, skips placeholder args, and allows capability handlers to output replacement tools.
    - **Caching**: `ResultCache` prevents duplicate calls within the same turn
    - **Execution**: `runToolCalls()` with retry strategy (exponential backoff)
    - **Normalization**: `toolResultNormalizer.ts` standardizes result structures
@@ -242,7 +250,8 @@ flowchart TD
 - **Follow-up suggestion engine**: Context-aware follow-up tool recommendations based on tool results and conversation history
 - **Reference resolution**: Resolves pronouns and references (e.g., "that incident") to specific entities using conversation context
 - **Scope inference**: Automatic scope detection (service, environment, team) for intelligent tool parameterization with confidence weighting
-- **Validation system**: Per-capability handlers validate tool calls and normalize arguments
+- **Validation system**: Per-capability handlers validate tool calls, normalize arguments into correct forms, and actively propose tool replacements mid-verification.
+- **Plan refinement**: Advanced multi-stage heuristic processing integrating schema null-field stripping, executed tool deduplication, and intent-driven fallback injection.
 - **Correlation detection**: Cross-domain correlation handlers for incidents, logs, and metrics
 - **Anomaly detection**: Statistical anomaly detection in metric time series data
 - **Query building**: Natural language to structured query conversion for logs and metrics
