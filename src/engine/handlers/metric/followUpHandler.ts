@@ -297,7 +297,7 @@ export const metricFollowUpHandler: FollowUpHandler = async (
       // Check if we already added it to suggestions in this turn
       const alreadySuggested = suggestions.some(s =>
         s.name === "describe-metrics" &&
-        (s.arguments.scope as any)?.service === service
+        (s.arguments.scope as JsonObject)?.service === service
       );
 
       if (!alreadySuggested) {

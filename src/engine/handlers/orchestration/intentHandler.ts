@@ -41,13 +41,3 @@ export const orchestrationIntentHandler: IntentHandler = async (context): Promis
         reasoning: 'No orchestration keywords detected'
     };
 };
-function extractQuery(text: string): string {
-    // Simple extraction: take words after key phrases
-    const connectives = ['for', 'about', 'finding', 'showing'];
-    const words = text.split(' ');
-    const idx = words.findIndex(w => connectives.includes(w));
-    if (idx !== -1 && idx < words.length - 1) {
-        return words.slice(idx + 1).join(' ');
-    }
-    return text;
-}
