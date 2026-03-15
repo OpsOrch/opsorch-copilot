@@ -577,6 +577,47 @@ describe('SqliteConversationStore', () => {
                 cleanup();
             }
         });
+
+        it('should safely stringify and store conversations with BigInt and Circular Errors', async () => {
+            const { path, cleanup } = createTempDb();
+
+            try {
+                const store = new SqliteConversationStore(defaultConfig, path);
+                const conversation = createTestConversation('chat2', 'Serialization Test');
+                
+                // Construct a circular error specifically to mimic unhandled fetch exceptions
+                const fetchError = new Error("fetch failed");
+                (fetchError as any).cause = fetchError; // Create circular reference
+                
+                conversation.turns.push({
+                    userMessage: 'Trigger complex log payload',
+                    assistantResponse: 'Fetched with errors.',
+                    timestamp: Date.now(),
+                    toolResults: [{
+                        name: 'fetch-tool',
+                        // BigInt and circular error mimic exact payloads that crash JSON.stringify
+                        result: { count: BigInt(9007199254740991n), error: fetchError } as any
+                    }]
+                });
+
+                await store.set('chat2', conversation);
+                const retrieved = await store.get('chat2');
+                
+                assert.strictEqual(retrieved?.turns.length, 2);
+                
+                // Assert BigInt was safely stringified to string
+                const complexTurn = retrieved?.turns[1];
+                const complexResult = complexTurn?.toolResults?.[0].result as any;
+                
+                assert.strictEqual(complexResult.count, "9007199254740991");
+                assert.strictEqual(complexResult.error.message, "fetch failed");
+                assert.strictEqual(complexResult.error.cause, "[Circular]");
+
+                await store.close();
+            } finally {
+                cleanup();
+            }
+        });
     });
 });
 

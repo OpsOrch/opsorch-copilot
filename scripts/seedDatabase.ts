@@ -5,7 +5,7 @@
  */
 
 import { SqliteConversationStore } from "../src/stores/sqliteConversationStore.js";
-import { Conversation, ConversationTurn, Entity } from "../src/types.js";
+import { Conversation, ConversationTurn } from "../src/types.js";
 import { randomUUID } from "crypto";
 
 const DB_PATH = "./data/conversations.db";
@@ -56,9 +56,6 @@ function generateIncidentId(): string {
   return `INC-${Math.floor(10000 + Math.random() * 90000)}`;
 }
 
-function generateTicketId(): string {
-  return `TICK-${Math.floor(1000 + Math.random() * 9000)}`;
-}
 
 interface ConversationTemplate {
   name: (service: string) => string;

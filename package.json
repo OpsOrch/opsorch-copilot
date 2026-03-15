@@ -30,7 +30,7 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "type-check": "tsc --noEmit",
-    "test": "NODE_ENV=test node --test --loader ts-node/esm tests/*.test.ts tests/**/*.test.ts",
+    "test": "node --loader ts-node/esm scripts/runTests.ts",
     "start": "node --loader ts-node/esm src/server.ts",
     "seed": "node --loader ts-node/esm scripts/seedDatabase.ts"
   },

@@ -296,8 +296,36 @@ export class SqliteConversationStore implements ConversationStore {
         }
       }
 
-      // Serialize turns to JSON
-      const turnsJson = JSON.stringify(conversation.turns);
+      // Safely serialize turns to JSON considering Errors, BigInts, and circular references
+      let turnsJson: string;
+      try {
+        const errorCache = new Set();
+        turnsJson = JSON.stringify(conversation.turns, (key, value) => {
+          if (value instanceof Error) {
+            if (errorCache.has(value)) {
+              return "[Circular]";
+            }
+            errorCache.add(value);
+            return { 
+              name: value.name, 
+              message: value.message, 
+              stack: value.stack,
+              ...((value as any).cause ? { cause: (value as any).cause } : {})
+            };
+          }
+          if (typeof value === "bigint") {
+            return value.toString();
+          }
+          return value;
+        });
+      } catch (stringifyError) {
+        console.warn(`[SqliteConversationStore] Failed to serialize turns for ${chatId}, saving a fallback format:`, stringifyError);
+        turnsJson = JSON.stringify([{
+            userMessage: "[Error]",
+            assistantResponse: "Conversation could not be saved due to an unserializable object in the execution trace.",
+            timestamp: Date.now()
+        }]);
+      }
 
       // Insert or replace conversation
       this.setStmt.run(

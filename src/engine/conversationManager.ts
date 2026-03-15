@@ -316,10 +316,23 @@ function safeStringify(value: unknown): string {
   if (typeof value === "string") {
     return value;
   }
-
+  
   try {
-    return JSON.stringify(value);
-  } catch {
+    const errorCache = new Set();
+    return JSON.stringify(value, (key, val) => {
+      if (val instanceof Error) {
+        if (errorCache.has(val)) {
+          return "[Circular]";
+        }
+        errorCache.add(val);
+        return { name: val.name, message: val.message };
+      }
+      if (typeof val === "bigint") {
+        return val.toString();
+      }
+      return val;
+    });
+  } catch (err) {
     return String(value);
   }
 }
