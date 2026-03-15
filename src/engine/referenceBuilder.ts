@@ -393,61 +393,53 @@ export function buildReferences(
       }
     }
 
-    let query: string | undefined;
+    // Only extract log references from log tools
+    if (capabilityType === "log") {
+      let query: string | undefined;
 
-    // MCP logQuerySchema: expression is object with search field
-    if (args.expression && typeof args.expression === "object" && !Array.isArray(args.expression)) {
-      const expr = args.expression as JsonObject;
-      // MCP logExpressionSchema: search is z.string().optional()
-      if (typeof expr.search === "string") query = expr.search;
-
-      // If we have filters but no search string, use "Filtered Logs" or similar placeholder
-      // or just allow empty search. The Reference structure allows undefined search if we change types, 
-      // but let's check strict types. LogReference.expression.search is optional in types.ts?
-      // Let's check types again. 
-      // types.ts: export interface LogExpression { search?: string; ... }
-      // So we can create a LogReference without search string if filters exist.
-    }
-
-    // Check if we have enough to make a reference (search OR filters)
-    const hasSearch = typeof query === "string";
-    const exprObj = (args.expression as JsonObject) || {};
-    const hasFilters = Array.isArray(exprObj.filters) && exprObj.filters.length > 0;
-
-    if (hasSearch || hasFilters) {
-      // Construct a simple LogReference
-      const log: LogReference = {
-        expression: {},
-      };
-      if (hasSearch) log.expression.search = query;
-
-      // Copy filters if present
-      if (hasFilters) {
-        // We can blindly copy filters if structure matches, or leave emptiness.
-        // Ideally we copy them to be accurate.
-        // defined in types as: filters?: { field: string; operator: string; value: string }[];
-        // Let's copy them correctly.
-        log.expression.filters = exprObj.filters as { field: string; operator: string; value: string }[];
+      // MCP logQuerySchema: expression is object with search field
+      if (args.expression && typeof args.expression === "object" && !Array.isArray(args.expression)) {
+        const expr = args.expression as JsonObject;
+        // MCP logExpressionSchema: search is z.string().optional()
+        if (typeof expr.search === "string") query = expr.search;
       }
 
-      if (typeof args.start === "string" && args.start.trim())
-        log.start = args.start.trim();
-      if (typeof args.end === "string" && args.end.trim())
-        log.end = args.end.trim();
-      if (typeof args.service === "string" && args.service.trim())
-        log.scope = { service: args.service.trim() };
+      // Check if we have enough to make a reference (search OR filters)
+      const hasSearch = typeof query === "string";
+      const exprObj = (args.expression as JsonObject) || {};
+      const hasFilters = Array.isArray(exprObj.filters) && exprObj.filters.length > 0;
 
-      // Handle object scope (MCP uses scope object)
-      if (
-        args.scope &&
-        typeof args.scope === "object" &&
-        !Array.isArray(args.scope) &&
-        (args.scope as JsonObject).service
-      ) {
-        log.scope = log.scope ?? { service: (args.scope as JsonObject).service as string };
+      if (hasSearch || hasFilters) {
+        // Construct a simple LogReference
+        const log: LogReference = {
+          expression: {},
+        };
+        if (hasSearch) log.expression.search = query;
+
+        // Copy filters if present
+        if (hasFilters) {
+          log.expression.filters = exprObj.filters as { field: string; operator: string; value: string }[];
+        }
+
+        if (typeof args.start === "string" && args.start.trim())
+          log.start = args.start.trim();
+        if (typeof args.end === "string" && args.end.trim())
+          log.end = args.end.trim();
+        if (typeof args.service === "string" && args.service.trim())
+          log.scope = { service: args.service.trim() };
+
+        // Handle object scope (MCP uses scope object)
+        if (
+          args.scope &&
+          typeof args.scope === "object" &&
+          !Array.isArray(args.scope) &&
+          (args.scope as JsonObject).service
+        ) {
+          log.scope = log.scope ?? { service: (args.scope as JsonObject).service as string };
+        }
+
+        logs.push(log);
       }
-
-      logs.push(log);
     }
   }
 

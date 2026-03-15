@@ -412,6 +412,40 @@ test('referenceBuilder', async (t) => {
         assert.ok(refs.teams.includes('Velocity Team'), 'Should include team name');
     });
 
+    await t.test('does not create log references for metric tools with expression.search', () => {
+        const results: ToolResult[] = [
+            {
+                name: 'query-metrics',
+                arguments: {
+                    expression: { metricName: 'cpu_usage', search: 'something' },
+                    start: '2024-01-01T00:00:00Z',
+                    end: '2024-01-01T01:00:00Z',
+                    step: 60,
+                },
+                result: [],
+            },
+        ];
 
+        const refs = buildReferences(results);
+        assert.ok(!refs?.logs?.length, 'Metric tools should not produce log references');
+    });
+
+    await t.test('creates log references for actual log tools', () => {
+        const results: ToolResult[] = [
+            {
+                name: 'query-logs',
+                arguments: {
+                    expression: { search: 'error 504' },
+                    start: '2024-01-01T00:00:00Z',
+                    end: '2024-01-01T01:00:00Z',
+                },
+                result: { logs: [] },
+            },
+        ];
+
+        const refs = buildReferences(results);
+        assert.ok(refs?.logs?.length, 'Log tools should produce log references');
+        assert.strictEqual(refs!.logs![0].expression.search, 'error 504');
+    });
 
 });

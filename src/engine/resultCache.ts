@@ -166,9 +166,20 @@ export class ResultCache {
   set(call: ToolCall, result: ToolResult, scopeKey: string = "global"): void {
     const key = createScopedCacheKey(scopeKey, call);
 
-    // Remove existing entry if present
+    // Remove existing exact-key entry if present
     if (this.cache.has(key)) {
       this.accessOrder = this.accessOrder.filter((k) => k !== key);
+    } else {
+      // Also remove any fuzzy-matched entry under a different key to prevent duplicates
+      for (const [existingKey, candidate] of this.cache.entries()) {
+        if (candidate.scopeKey !== scopeKey) continue;
+        if (candidate.call.name !== call.name) continue;
+        if (isFuzzyEqual(call.arguments || {}, candidate.call.arguments || {})) {
+          this.cache.delete(existingKey);
+          this.accessOrder = this.accessOrder.filter((k) => k !== existingKey);
+          break;
+        }
+      }
     }
 
     // Evict oldest entry if cache is full

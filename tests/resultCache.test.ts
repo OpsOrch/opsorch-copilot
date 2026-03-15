@@ -305,3 +305,43 @@ test('expired entries count as misses', async () => {
     assert.equal(stats.hits, 1);
     assert.equal(stats.misses, 1);
 });
+
+test('cache.set removes existing fuzzy-matched entry to prevent duplicates', () => {
+    const cache = new ResultCache({ maxSize: 10, ttlMs: 60000 });
+
+    const call1: ToolCall = {
+        name: 'query-logs',
+        arguments: {
+            start: '2025-01-01T10:00:15.000Z',
+            end: '2025-01-01T10:30:00.000Z',
+        },
+    };
+    cache.set(call1, { name: 'query-logs', result: 'first' });
+
+    const call2: ToolCall = {
+        name: 'query-logs',
+        arguments: {
+            start: '2025-01-01T10:00:45.000Z', // +30s
+            end: '2025-01-01T10:30:00.000Z',
+        },
+    };
+    cache.set(call2, { name: 'query-logs', result: 'second' });
+
+    assert.equal(cache.stats().size, 1, 'Fuzzy-matched entries should replace, not accumulate');
+    assert.deepEqual(cache.get(call2), { name: 'query-logs', result: 'second' });
+});
+
+test('cache.set does not remove entries with different tool names', () => {
+    const cache = new ResultCache({ maxSize: 10, ttlMs: 60000 });
+
+    cache.set(
+        { name: 'query-logs', arguments: { start: '2025-01-01T10:00:00Z' } },
+        { name: 'query-logs', result: 'logs' },
+    );
+    cache.set(
+        { name: 'query-metrics', arguments: { start: '2025-01-01T10:00:00Z' } },
+        { name: 'query-metrics', result: 'metrics' },
+    );
+
+    assert.equal(cache.stats().size, 2, 'Different tool names should not be deduped');
+});

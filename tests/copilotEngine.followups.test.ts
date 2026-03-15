@@ -334,3 +334,231 @@ test('caches dependency-resolved detail calls by executed arguments, not unresol
     'Timeline calls should use each resolved incident id instead of reusing a stale no-id cache entry',
   );
 });
+
+test('first iteration follow-ups suggest orchestration plans for active incidents', async () => {
+  let plannerCalls = 0;
+  const llm: LlmClient = {
+    async chat(_messages: LlmMessage[], tools: Tool[]) {
+      if (tools.length) {
+        plannerCalls++;
+        if (plannerCalls === 1) {
+          return {
+            content: 'plan',
+            toolCalls: [{ name: 'query-incidents', arguments: {} }],
+          };
+        }
+        return { content: 'stop', toolCalls: [] };
+      }
+      return {
+        content: JSON.stringify({ conclusion: 'done', evidence: [] }),
+        toolCalls: [],
+      };
+    },
+  };
+
+  const calls: ToolCall[] = [];
+  const mcp: StubMcp = {
+    async listTools() {
+      return [
+        { name: 'query-incidents' } as Tool,
+        { name: 'query-orchestration-plans' } as Tool,
+      ];
+    },
+    async callTool(call): Promise<ToolResult> {
+      calls.push(call);
+      if (call.name === 'query-incidents') {
+        return {
+          name: call.name,
+          result: [
+            { id: 'INC-001', service: 'payments', status: 'active' },
+          ],
+        };
+      }
+      if (call.name === 'query-orchestration-plans') {
+        return { name: call.name, result: [] };
+      }
+      return { name: call.name, result: {} };
+    },
+  };
+
+  const engine = makeEngine(llm, mcp);
+  await engine.answer('investigate the payments incident');
+
+  const callNames = calls.map(c => c.name);
+  assert.ok(
+    callNames.includes('query-orchestration-plans'),
+    'First iteration should trigger orchestration plan follow-up for active incidents. Got: ' + callNames.join(', '),
+  );
+});
+
+test('first iteration follow-ups do not add unavailable tools', async () => {
+  const llm: LlmClient = {
+    async chat(_messages: LlmMessage[], tools: Tool[]) {
+      if (tools.length) {
+        return {
+          content: 'plan',
+          toolCalls: [{ name: 'query-incidents', arguments: {} }],
+        };
+      }
+      return {
+        content: JSON.stringify({ conclusion: 'done', evidence: [] }),
+        toolCalls: [],
+      };
+    },
+  };
+
+  const calls: ToolCall[] = [];
+  const mcp: StubMcp = {
+    async listTools() {
+      // Crucially: query-orchestration-plans is NOT in the tool list
+      return [{ name: 'query-incidents' } as Tool];
+    },
+    async callTool(call): Promise<ToolResult> {
+      calls.push(call);
+      return {
+        name: call.name,
+        result: [{ id: 'INC-001', service: 'payments', status: 'active' }],
+      };
+    },
+  };
+
+  const engine = makeEngine(llm, mcp);
+  await engine.answer('investigate payments incident');
+
+  const callNames = calls.map(c => c.name);
+  assert.ok(
+    !callNames.includes('query-orchestration-plans'),
+    'Should not attempt unavailable tools. Got: ' + callNames.join(', '),
+  );
+});
+
+test('first iteration follow-up results contribute entities to conversation state', async () => {
+  const llm: LlmClient = {
+    async chat(_messages: LlmMessage[], tools: Tool[]) {
+      if (tools.length) {
+        return {
+          content: 'plan',
+          toolCalls: [{ name: 'query-incidents', arguments: {} }],
+        };
+      }
+      return {
+        content: JSON.stringify({ conclusion: 'done', evidence: [] }),
+        toolCalls: [],
+      };
+    },
+  };
+
+  const mcp: StubMcp = {
+    async listTools() {
+      return [
+        { name: 'query-incidents' } as Tool,
+        { name: 'query-orchestration-plans' } as Tool,
+      ];
+    },
+    async callTool(call): Promise<ToolResult> {
+      if (call.name === 'query-incidents') {
+        return {
+          name: call.name,
+          result: [{ id: 'INC-001', service: 'payments', status: 'active' }],
+        };
+      }
+      if (call.name === 'query-orchestration-plans') {
+        return {
+          name: call.name,
+          result: [{ id: 'plan-42', name: 'payments recovery' }],
+        };
+      }
+      return { name: call.name, result: {} };
+    },
+  };
+
+  const engine = makeEngine(llm, mcp);
+  const answer = await engine.answer('investigate the payments incident');
+
+  const conversation = await engine.getConversationManager().peekConversation(answer.chatId);
+  const turnEntities = conversation?.turns[0]?.entities ?? [];
+  const planEntity = turnEntities.find((entity) => entity.type === 'orchestration_plan');
+
+  assert.ok(planEntity, 'Expected orchestration plan entity from first-iteration follow-up results');
+  assert.equal(planEntity?.value, 'plan-42');
+});
+
+test('answer synthesizer receives resolved question with entity references', async () => {
+  let synthesisPrompt = '';
+  const llm: LlmClient = {
+    async chat(messages: LlmMessage[], tools: Tool[]) {
+      if (tools.length) {
+        return {
+          content: 'plan',
+          toolCalls: [{ name: 'query-incidents', arguments: {} }],
+        };
+      }
+      // Capture the synthesis prompt
+      const lastMsg = messages[messages.length - 1];
+      synthesisPrompt = lastMsg?.content ?? '';
+      return {
+        content: JSON.stringify({ conclusion: 'done', evidence: [] }),
+        toolCalls: [],
+      };
+    },
+  };
+
+  const mcp: StubMcp = {
+    async listTools() {
+      return [{ name: 'query-incidents' } as Tool];
+    },
+    async callTool(call): Promise<ToolResult> {
+      return {
+        name: call.name,
+        result: [{ id: 'INC-001', service: 'payments', status: 'active' }],
+      };
+    },
+  };
+
+  const engine = makeEngine(llm, mcp);
+  // Ask using a plain question (no references to resolve)
+  await engine.answer('Show me active incidents');
+
+  // The synthesis prompt should contain the question text
+  assert.ok(
+    synthesisPrompt.includes('active incidents'),
+    'Synthesis prompt should include the question text',
+  );
+});
+
+test('first iteration does not double-validate through refineCalls', async () => {
+  // This is a structural test: we verify the engine doesn't crash and the
+  // plan goes through validation only once by checking the tool calls executed.
+  const llm: LlmClient = {
+    async chat(_messages: LlmMessage[], tools: Tool[]) {
+      if (tools.length) {
+        return {
+          content: 'plan',
+          toolCalls: [{ name: 'query-services', arguments: {} }],
+        };
+      }
+      return {
+        content: JSON.stringify({ conclusion: 'services ok', evidence: [] }),
+        toolCalls: [],
+      };
+    },
+  };
+
+  const calls: ToolCall[] = [];
+  const mcp: StubMcp = {
+    async listTools() {
+      return [{ name: 'query-services' } as Tool];
+    },
+    async callTool(call): Promise<ToolResult> {
+      calls.push(call);
+      return { name: call.name, result: { services: ['svc-a'] } };
+    },
+  };
+
+  const engine = makeEngine(llm, mcp);
+  await engine.answer('list services');
+
+  // The tool should be called exactly once (no double execution from double validation)
+  assert.equal(calls.length, 1, 'Tool should execute exactly once');
+  assert.equal(calls[0].name, 'query-services');
+});

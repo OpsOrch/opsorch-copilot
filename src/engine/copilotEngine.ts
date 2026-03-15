@@ -417,12 +417,16 @@ export class CopilotEngine {
       }
 
       // Validate and fix calls (ensures required args like start/end/step are present for metrics)
-      plannedCalls = await this.planRefiner.refineCalls(
-        plannedCalls,
-        this.mcp.getTools(),
-        conversationTurns,
-        allResults,
-      );
+      // Note: On first iteration, refineCalls is already called inside applyHeuristics,
+      // so we only need to call it explicitly on follow-up iterations.
+      if (!isFirstIteration) {
+        plannedCalls = await this.planRefiner.refineCalls(
+          plannedCalls,
+          this.mcp.getTools(),
+          conversationTurns,
+          allResults,
+        );
+      }
 
       // Limit calls
       plannedCalls = this.limitToolCalls(plannedCalls);
@@ -461,11 +465,47 @@ export class CopilotEngine {
 
       // D. Accumulate
       allResults.push(...results);
+
+      // D2. Run follow-up heuristics after first iteration results too
+      // (Previously follow-ups only ran on iteration ≥2, missing orchestration plan lookups
+      // when problems were detected on the first tool execution)
+      let iterationResultsForEntityExtraction = results;
+
+      if (isFirstIteration && results.length > 0) {
+        const formattedForFollowUp = this.formatResultsForPlanning(allResults);
+        const availableToolNames = new Set(this.mcp.getTools().map((t) => t.name));
+        const firstIterationFollowUps = (await this.followUpEngine.applyFollowUps(
+          formattedForFollowUp,
+          chatId,
+          conversationTurns,
+          questionForPlanning,
+          plannedCalls,
+        )).filter((c) => availableToolNames.has(c.name));
+
+        if (firstIterationFollowUps.length > 0) {
+          console.log(
+            `[Copilot][${chatId}] First-iteration follow-ups: ${firstIterationFollowUps.length} call(s): ${firstIterationFollowUps.map((c) => c.name).join(", ")}`,
+          );
+
+          const followUpResults = await this.runToolCallsWithCache(
+            this.limitToolCalls(firstIterationFollowUps),
+            chatId,
+            this.mcp.getTools(),
+            trace,
+          );
+          allResults.push(...followUpResults);
+          iterationResultsForEntityExtraction = [
+            ...results,
+            ...followUpResults,
+          ];
+        }
+      }
+
       isFirstIteration = false;
 
       // E. Extract entities from results
       const extractedEntities = await this.entityExtractor.extractFromResults(
-        results,
+        iterationResultsForEntityExtraction,
         chatId,
         conversationTurns,
       );
@@ -537,12 +577,13 @@ export class CopilotEngine {
       );
     }
 
-    // Step 5: Synthesize final answer
+    // Step 5: Synthesize final answer (use resolved question and conversation history for context)
     const answer = await synthesizeCopilotAnswer(
-      question,
+      questionForPlanning,
       allResults,
       chatId,
       this.config.llm,
+      conversationHistory,
     );
 
     // If calls were planned but no results were collected, tool calls were likely

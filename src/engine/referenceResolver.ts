@@ -24,10 +24,10 @@ export class ReferenceResolver {
     conversationHistory?: ConversationTurn[],
   ): Promise<Map<string, string>> {
     const resolutions = new Map<string, string>();
-    const normalized = question.toLowerCase();
 
-    // Extract potential reference patterns from the question
-    const referencePatterns = this.extractReferencePatterns(normalized);
+    // Extract potential reference patterns from the original question
+    // (handlers receive original casing; replacement uses case-insensitive regex)
+    const referencePatterns = this.extractReferencePatterns(question);
 
     for (const { text, entityType } of referencePatterns) {
       if (this.referenceRegistry.hasHandlers(entityType)) {

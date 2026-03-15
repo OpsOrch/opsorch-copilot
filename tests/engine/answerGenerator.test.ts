@@ -155,6 +155,68 @@ describe('synthesizeCopilotAnswer', () => {
         assert.strictEqual(answer.chatId, 'chat-error');
     });
 
+    test('passes very long multi-turn conversation history alongside the final synthesis prompt', async () => {
+        let capturedMessages: LlmMessage[] = [];
+
+        const llm: LlmClient = {
+            async chat(messages: LlmMessage[], _tools: Tool[]) {
+                capturedMessages = messages;
+                return {
+                    content: JSON.stringify({
+                        conclusion: 'Long-context synthesis completed.',
+                        confidence: 0.82,
+                    }),
+                    toolCalls: [],
+                };
+            }
+        };
+
+        const conversationHistory: LlmMessage[] = [
+            { role: 'user', content: 'Initial incident report ' + 'a'.repeat(4000) },
+            { role: 'tool', content: 'query-incidents: ' + 'b'.repeat(3500) },
+            { role: 'assistant', content: 'Preliminary analysis ' + 'c'.repeat(4200) },
+            { role: 'user', content: 'Can you correlate this with logs and metrics? ' + 'd'.repeat(3800) },
+            { role: 'tool', content: 'query-logs: ' + 'e'.repeat(3600) },
+            { role: 'assistant', content: 'I found several suspicious signals ' + 'f'.repeat(4100) },
+        ];
+
+        const results: ToolResult[] = [
+            {
+                name: 'query-incidents',
+                arguments: {},
+                result: {
+                    incidents: [{ id: 'inc-900', title: 'Major outage', service: 'payments' }]
+                }
+            }
+        ];
+
+        const answer = await synthesizeCopilotAnswer(
+            'Summarize the current status',
+            results,
+            'chat-long-history',
+            llm,
+            conversationHistory,
+        );
+
+        assert.strictEqual(answer.chatId, 'chat-long-history');
+        assert.strictEqual(capturedMessages.length, conversationHistory.length + 1,
+            'Synthesis should append exactly one final prompt after the supplied history');
+        assert.deepStrictEqual(
+            capturedMessages.slice(0, conversationHistory.length),
+            conversationHistory,
+            'Conversation history should be forwarded unchanged and in order',
+        );
+        assert.strictEqual(
+            capturedMessages[capturedMessages.length - 1]?.role,
+            'user',
+            'Final synthesis prompt should be appended as the last user message',
+        );
+        assert.ok(
+            capturedMessages[capturedMessages.length - 1]?.content.includes('Summarize the current status'),
+            'Final synthesis prompt should still include the current question',
+        );
+    });
+
     test('includes correlations and anomalies in fallback on LLM failure', async () => {
         const llm: LlmClient = {
             async chat(_messages: LlmMessage[], _tools: Tool[]) {
@@ -522,4 +584,3 @@ describe('synthesizeCopilotAnswer', () => {
     });
 
 });
-
