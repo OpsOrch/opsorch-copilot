@@ -225,6 +225,10 @@ export class CopilotEngine {
       for (let i = 0; i < callsToExecute.length; i++) {
         const result = freshResults[i];
         if (!result) continue; // Skip if somehow undefined
+        const executedCall: ToolCall = {
+          ...callsToExecute[i],
+          arguments: result.arguments ?? callsToExecute[i].arguments,
+        };
 
         const isError =
           typeof result.result === "object" &&
@@ -233,14 +237,14 @@ export class CopilotEngine {
 
         // Only cache if not an error
         if (!isError) {
-          this.resultCache.set(callsToExecute[i], result, chatId);
+          this.resultCache.set(executedCall, result, chatId);
         }
 
         // Record tool execution in trace
         if (trace) {
           this.executionTracer.recordToolExecution(trace, {
-            toolName: callsToExecute[i].name,
-            arguments: callsToExecute[i].arguments,
+            toolName: executedCall.name,
+            arguments: executedCall.arguments,
             cacheHit: false,
             executionTimeMs: Math.round(executionTime / callsToExecute.length), // Approximate per-tool time
             success: !isError,
