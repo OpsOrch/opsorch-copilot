@@ -9,7 +9,7 @@
  */
 
 import type { FollowUpHandler } from "../handlers.js";
-import type { ToolCall, JsonObject } from "../../../types.js";
+import type { ToolCall, ToolResult, JsonObject } from "../../../types.js";
 import { generateSearchExpression } from "../logQueryParser.js";
 import { HandlerUtils } from "../utils.js";
 
@@ -29,11 +29,169 @@ const LATENCY_METRIC_PATTERNS = [
   "timeout",
 ];
 
+function extractMetricNames(result: ToolResult["result"]): string[] {
+  if (Array.isArray(result)) {
+    return result
+      .map((entry) => {
+        if (typeof entry === "string") return entry;
+        if (entry && typeof entry === "object" && "name" in entry) {
+          const name = (entry as JsonObject).name;
+          return typeof name === "string" ? name : undefined;
+        }
+        return undefined;
+      })
+      .filter((name): name is string => typeof name === "string" && name.length > 0);
+  }
+
+  if (result && typeof result === "object") {
+    const metrics = (result as JsonObject).metrics;
+    if (Array.isArray(metrics)) {
+      return extractMetricNames(metrics);
+    }
+  }
+
+  return [];
+}
+
+function shouldQueryDiscoveredMetrics(question: string): boolean {
+  const lower = question.toLowerCase();
+  const discoveryOnlyPatterns = [
+    "available metrics",
+    "list metrics",
+    "what metrics",
+    "which metrics",
+  ];
+  if (discoveryOnlyPatterns.some((pattern) => lower.includes(pattern))) {
+    return false;
+  }
+
+  const investigationTerms = [
+    "metric",
+    "metrics",
+    "cpu",
+    "memory",
+    "latency",
+    "p95",
+    "p99",
+    "throughput",
+    "request",
+    "error",
+  ];
+  const actionTerms = [
+    "check",
+    "show",
+    "inspect",
+    "analy",
+    "graph",
+    "trend",
+    "root cause",
+    "why",
+    "high",
+  ];
+
+  return (
+    investigationTerms.some((term) => lower.includes(term)) &&
+    actionTerms.some((term) => lower.includes(term))
+  );
+}
+
+function selectMetricName(question: string, metricNames: string[]): string | undefined {
+  const lower = question.toLowerCase();
+  const preferredTokens = [
+    "cpu",
+    "memory",
+    "latency",
+    "p99",
+    "p95",
+    "throughput",
+    "request",
+    "error",
+  ];
+
+  for (const token of preferredTokens) {
+    if (!lower.includes(token)) continue;
+    const match = metricNames.find((name) => name.toLowerCase().includes(token));
+    if (match) return match;
+  }
+
+  return metricNames[0];
+}
+
+function getIncidentTimeWindow(context: Parameters<FollowUpHandler>[0]): {
+  start: string;
+  end: string;
+} | null {
+  for (const result of context.toolResults) {
+    if (result.name !== "query-incidents" && result.name !== "get-incident") {
+      continue;
+    }
+
+    const incident = Array.isArray(result.result)
+      ? result.result[0]
+      : result.result;
+    if (!incident || typeof incident !== "object") {
+      continue;
+    }
+
+    const incidentObject = incident as JsonObject;
+    const startValue = incidentObject.startTime ?? incidentObject.createdAt;
+    const endValue = incidentObject.endTime ?? incidentObject.updatedAt;
+    if (typeof startValue !== "string" && typeof endValue !== "string") {
+      continue;
+    }
+
+    const expanded = HandlerUtils.expandTimeWindow(
+      typeof startValue === "string" ? startValue : undefined,
+      typeof endValue === "string" ? endValue : undefined,
+      15,
+    );
+    return {
+      start: expanded.start.toISOString(),
+      end: expanded.end.toISOString(),
+    };
+  }
+
+  return null;
+}
+
 export const metricFollowUpHandler: FollowUpHandler = async (
   context,
   toolResult,
 ): Promise<ToolCall[]> => {
   const suggestions: ToolCall[] = [];
+
+  if (toolResult.name === "describe-metrics") {
+    const metricNames = extractMetricNames(toolResult.result);
+    const scope = toolResult.arguments?.scope as JsonObject | undefined;
+    const service = scope?.service;
+
+    if (
+      typeof service === "string" &&
+      metricNames.length > 0 &&
+      shouldQueryDiscoveredMetrics(context.userQuestion) &&
+      !HandlerUtils.isDuplicateToolCall(context, "query-metrics", service)
+    ) {
+      const metricName = selectMetricName(context.userQuestion, metricNames);
+      if (metricName) {
+        const incidentWindow = getIncidentTimeWindow(context);
+        const end = incidentWindow?.end ?? new Date().toISOString();
+        const start = incidentWindow?.start ?? new Date(Date.now() - 60 * 60 * 1000).toISOString();
+
+        suggestions.push({
+          name: "query-metrics",
+          arguments: {
+            scope: { service },
+            expression: { metricName },
+            step: 60,
+            start,
+            end,
+          },
+        });
+      }
+    }
+
+    return suggestions;
+  }
 
   if (!toolResult.result || typeof toolResult.result !== "object") {
     return suggestions;
@@ -155,4 +313,3 @@ export const metricFollowUpHandler: FollowUpHandler = async (
 
   return suggestions;
 };
-

@@ -37,13 +37,13 @@ function createTurnWithToolsAndEntities(
 }
 
 test("teamReferenceHandler", async (t) => {
-    const createContext = (conversationHistory: ConversationTurn[] = []): HandlerContext =>
+    const createContext = (conversationHistory: ConversationTurn[] = [], toolResults: ToolResult[] = []): HandlerContext =>
         ({
             chatId: "chat",
             turnNumber: 1,
             userQuestion: "test",
             conversationHistory,
-            toolResults: [],
+            toolResults,
         }) as HandlerContext;
 
     await t.test("should return null when no team entities exist", async () => {
@@ -53,39 +53,39 @@ test("teamReferenceHandler", async (t) => {
     });
 
     await t.test("should extract team from query-teams tool result", async () => {
-        const turn = createTurnWithToolsAndEntities([{
+        const toolResults: ToolResult[] = [{
             name: "query-teams",
             arguments: {},
             result: [
                 { id: "team-velocity", name: "Velocity Team" },
                 { id: "team-platform", name: "Platform Team" }
             ]
-        }]);
-        const context = createContext([turn]);
+        }];
+        const context = createContext([], toolResults);
 
         const result = await teamReferenceHandler(context, "that team");
         assert.equal(result, "team-velocity"); // Should return first/most prominent
     });
 
     await t.test("should extract team from get-team tool result", async () => {
-        const turn = createTurnWithToolsAndEntities([{
+        const toolResults: ToolResult[] = [{
             name: "get-team",
             arguments: { id: "team-velocity" },
             result: { id: "team-velocity", name: "Velocity Team" }
-        }]);
-        const context = createContext([turn]);
+        }];
+        const context = createContext([], toolResults);
 
         const result = await teamReferenceHandler(context, "this team");
         assert.equal(result, "team-velocity");
     });
 
     await t.test("should extract team from get-team-members tool arguments", async () => {
-        const turn = createTurnWithToolsAndEntities([{
+        const toolResults: ToolResult[] = [{
             name: "get-team-members",
             arguments: { id: "team-velocity" },
             result: [{ id: "user1", name: "John Doe" }]
-        }]);
-        const context = createContext([turn]);
+        }];
+        const context = createContext([], toolResults);
 
         const result = await teamReferenceHandler(context, "that team");
         assert.equal(result, "team-velocity");
@@ -103,15 +103,15 @@ test("teamReferenceHandler", async (t) => {
     });
 
     await t.test("should prioritize exact name matches in reference text", async () => {
-        const turn = createTurnWithToolsAndEntities([{
+        const toolResults: ToolResult[] = [{
             name: "query-teams",
             arguments: {},
             result: [
                 { id: "team-velocity", name: "Velocity Team" },
                 { id: "team-platform", name: "Platform Team" }
             ]
-        }]);
-        const context = createContext([turn]);
+        }];
+        const context = createContext([], toolResults);
 
         const result = await teamReferenceHandler(context, "the platform team");
         assert.equal(result, "team-platform");
@@ -130,7 +130,14 @@ test("teamReferenceHandler", async (t) => {
             result: { id: "team-recent", name: "Recent Team" }
         }], [], Date.now());
 
-        const context = createContext([oldTurn, recentTurn]);
+        // Also add current tool results for immediate context
+        const toolResults: ToolResult[] = [{
+            name: "get-team",
+            arguments: {},
+            result: { id: "team-recent", name: "Recent Team" }
+        }];
+
+        const context = createContext([oldTurn, recentTurn], toolResults);
 
         const result = await teamReferenceHandler(context, "that team");
         assert.equal(result, "team-recent");
@@ -149,87 +156,87 @@ test("teamReferenceHandler", async (t) => {
     });
 
     await t.test("should extract team name from 'the velocity team' pattern", async () => {
-        const turn = createTurnWithToolsAndEntities([{
+        const toolResults: ToolResult[] = [{
             name: "query-teams",
             arguments: {},
             result: [
                 { id: "team-velocity", name: "velocity" },
                 { id: "team-platform", name: "platform" }
             ]
-        }]);
-        const context = createContext([turn]);
+        }];
+        const context = createContext([], toolResults);
 
         const result = await teamReferenceHandler(context, "the velocity team");
         assert.equal(result, "team-velocity");
     });
 
     await t.test("should extract team name from 'velocity team' pattern", async () => {
-        const turn = createTurnWithToolsAndEntities([{
+        const toolResults: ToolResult[] = [{
             name: "query-teams",
             arguments: {},
             result: [{ id: "team-velocity", name: "velocity" }]
-        }]);
-        const context = createContext([turn]);
+        }];
+        const context = createContext([], toolResults);
 
         const result = await teamReferenceHandler(context, "velocity team");
         assert.equal(result, "team-velocity");
     });
 
     await t.test("should extract team name from 'team velocity' pattern", async () => {
-        const turn = createTurnWithToolsAndEntities([{
+        const toolResults: ToolResult[] = [{
             name: "query-teams",
             arguments: {},
             result: [{ id: "team-velocity", name: "velocity" }]
-        }]);
-        const context = createContext([turn]);
+        }];
+        const context = createContext([], toolResults);
 
         const result = await teamReferenceHandler(context, "team velocity");
         assert.equal(result, "team-velocity");
     });
 
     await t.test("should extract team name from 'team-velocity' pattern", async () => {
-        const turn = createTurnWithToolsAndEntities([{
+        const toolResults: ToolResult[] = [{
             name: "query-teams",
             arguments: {},
             result: [{ id: "team-velocity", name: "velocity" }]
-        }]);
-        const context = createContext([turn]);
+        }];
+        const context = createContext([], toolResults);
 
         const result = await teamReferenceHandler(context, "team-velocity");
         assert.equal(result, "team-velocity");
     });
 
     await t.test("should return null for domain mismatch", async () => {
-        const turn = createTurnWithToolsAndEntities([{
+        const toolResults: ToolResult[] = [{
             name: "query-teams",
             arguments: {},
             result: [{ id: "team-velocity", name: "Velocity Team" }]
-        }]);
-        const context = createContext([turn]);
+        }];
+        const context = createContext([], toolResults);
 
         const result = await teamReferenceHandler(context, "that service");
         assert.equal(result, null);
     });
 
     await t.test("should return null for incident reference", async () => {
-        const turn = createTurnWithToolsAndEntities([{
+        const toolResults: ToolResult[] = [{
             name: "query-teams",
             arguments: {},
             result: [{ id: "team-velocity", name: "Velocity Team" }]
-        }]);
-        const context = createContext([turn]);
+        }];
+        const context = createContext([], toolResults);
 
         const result = await teamReferenceHandler(context, "that incident");
         assert.equal(result, null);
     });
 
     await t.test("should allow team reference even with other entity words if 'team' is present", async () => {
-        const turn = createTurnWithToolsAndEntities([{
+        const toolResults: ToolResult[] = [{
             name: "query-teams",
             arguments: {},
             result: [{ id: "team-velocity", name: "Velocity Team" }]
-        }]);
-        const context = createContext([turn]);
+        }];
+        const context = createContext([], toolResults);
 
         const result = await teamReferenceHandler(context, "that team service");
         assert.equal(result, "team-velocity");
@@ -259,36 +266,36 @@ test("teamReferenceHandler", async (t) => {
     });
 
     await t.test("should handle case insensitive matching", async () => {
-        const turn = createTurnWithToolsAndEntities([{
+        const toolResults: ToolResult[] = [{
             name: "query-teams",
             arguments: {},
             result: [{ id: "team-velocity", name: "Velocity Team" }]
-        }]);
-        const context = createContext([turn]);
+        }];
+        const context = createContext([], toolResults);
 
         const result = await teamReferenceHandler(context, "THE VELOCITY TEAM");
         assert.equal(result, "team-velocity");
     });
 
     await t.test("should handle teams with no name gracefully", async () => {
-        const turn = createTurnWithToolsAndEntities([{
+        const toolResults: ToolResult[] = [{
             name: "query-teams",
             arguments: {},
             result: [{ id: "team-velocity" }] // No name field
-        }]);
-        const context = createContext([turn]);
+        }];
+        const context = createContext([], toolResults);
 
         const result = await teamReferenceHandler(context, "that team");
         assert.equal(result, "team-velocity");
     });
 
     await t.test("should handle invalid tool results gracefully", async () => {
-        const turn = createTurnWithToolsAndEntities([{
+        const toolResults: ToolResult[] = [{
             name: "query-teams",
             arguments: {},
             result: null
-        }]);
-        const context = createContext([turn]);
+        }];
+        const context = createContext([], toolResults);
 
         const result = await teamReferenceHandler(context, "that team");
         assert.equal(result, null);

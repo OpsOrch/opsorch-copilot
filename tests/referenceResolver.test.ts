@@ -11,24 +11,27 @@ test('ReferenceResolver: resolves "that incident" reference', async () => {
     entities: new Map(),
   };
 
+  // Create a simple conversation history with the new format
   const conversationHistory = [
     {
       userMessage: 'show me incidents',
       assistantResponse: 'Here are the incidents',
-      toolResults: [
+      timestamp: Date.now(),
+      entities: [
         {
-          name: 'query-incidents',
-          result: [
-            { id: 'INC-999', title: 'Test incident' }
-          ]
+          type: 'incident' as const,
+          value: 'INC-999',
+          prominence: 1.0,
+          extractedAt: Date.now(),
+          source: 'query-incidents'
         }
-      ],
-      timestamp: Date.now()
+      ]
     }
   ];
 
   const resolutions = await resolver.resolveReferences('What caused that incident?', context, conversationHistory);
 
+  // The resolver should identify the reference pattern and resolve it using entities
   assert.ok(resolutions.has('that incident'));
   assert.equal(resolutions.get('that incident'), 'INC-999');
 });
@@ -44,15 +47,16 @@ test('ReferenceResolver: resolves "this service" reference', async () => {
     {
       userMessage: 'show me services',
       assistantResponse: 'Here are the services',
-      toolResults: [
+      timestamp: Date.now(),
+      entities: [
         {
-          name: 'query-services',
-          result: [
-            { name: 'payment-api', status: 'healthy' }
-          ]
+          type: 'service' as const,
+          value: 'payment-api',
+          prominence: 1.0,
+          extractedAt: Date.now(),
+          source: 'query-services'
         }
-      ],
-      timestamp: Date.now()
+      ]
     }
   ];
 
@@ -74,15 +78,16 @@ test('ReferenceResolver: resolves "since then" time reference', async () => {
     {
       userMessage: 'show me incident timeline',
       assistantResponse: 'Here is the timeline',
-      toolResults: [
+      timestamp: Date.now(),
+      entities: [
         {
-          name: 'get-incident-timeline',
-          result: [
-            { at: baseTime, kind: 'incident started', body: 'Incident began' }
-          ]
+          type: 'timestamp' as const,
+          value: baseTime,
+          prominence: 1.0,
+          extractedAt: Date.now(),
+          source: 'get-incident-timeline'
         }
-      ],
-      timestamp: Date.now()
+      ]
     }
   ];
 
@@ -128,28 +133,30 @@ test('ReferenceResolver: returns most recent entity when multiple exist', async 
     {
       userMessage: 'show me incidents',
       assistantResponse: 'Here are the incidents',
-      toolResults: [
+      timestamp: now - 1000,
+      entities: [
         {
-          name: 'query-incidents',
-          result: [
-            { id: 'INC-100', title: 'Old incident' }
-          ]
+          type: 'incident' as const,
+          value: 'INC-100',
+          prominence: 1.0,
+          extractedAt: now - 1000,
+          source: 'query-incidents'
         }
-      ],
-      timestamp: now - 1000
+      ]
     },
     {
       userMessage: 'show me more incidents',
       assistantResponse: 'Here are more',
-      toolResults: [
+      timestamp: now,
+      entities: [
         {
-          name: 'query-incidents',
-          result: [
-            { id: 'INC-200', title: 'Recent incident' }
-          ]
+          type: 'incident' as const,
+          value: 'INC-200',
+          prominence: 1.0,
+          extractedAt: now,
+          source: 'query-incidents'
         }
-      ],
-      timestamp: now
+      ]
     }
   ];
 
@@ -182,15 +189,16 @@ test('ReferenceResolver: handles "before that" time reference', async () => {
     {
       userMessage: 'show me incident timeline',
       assistantResponse: 'Here is the timeline',
-      toolResults: [
+      timestamp: Date.now(),
+      entities: [
         {
-          name: 'get-incident-timeline',
-          result: [
-            { at: baseTime, kind: 'incident started', body: 'Incident began' }
-          ]
+          type: 'timestamp' as const,
+          value: baseTime,
+          prominence: 1.0,
+          extractedAt: Date.now(),
+          source: 'get-incident-timeline'
         }
-      ],
-      timestamp: Date.now()
+      ]
     }
   ];
 
@@ -217,28 +225,30 @@ test('ReferenceResolver: handles multiple references in one question', async () 
     {
       userMessage: 'show me incidents',
       assistantResponse: 'Here they are',
-      toolResults: [
+      timestamp: Date.now(),
+      entities: [
         {
-          name: 'query-incidents',
-          result: [
-            { id: 'INC-999', title: 'Critical incident' }
-          ]
+          type: 'incident' as const,
+          value: 'INC-999',
+          prominence: 1.0,
+          extractedAt: Date.now(),
+          source: 'query-incidents'
         }
-      ],
-      timestamp: Date.now()
+      ]
     },
     {
       userMessage: 'and services',
       assistantResponse: 'Here are services',
-      toolResults: [
+      timestamp: Date.now(),
+      entities: [
         {
-          name: 'query-services',
-          result: [
-            { name: 'payment-api', status: 'healthy' }
-          ]
+          type: 'service' as const,
+          value: 'payment-api',
+          prominence: 1.0,
+          extractedAt: Date.now(),
+          source: 'query-services'
         }
-      ],
-      timestamp: Date.now()
+      ]
     }
   ];
 
@@ -261,29 +271,42 @@ test('ReferenceResolver: uses prominence as tiebreaker when timestamps are equal
     entities: new Map(),
   };
 
-  // Test that when we have multiple incidents in one result, we get one of them
+  // Test that when we have multiple incidents in one result, we get the most prominent one
   const conversationHistory = [
     {
       userMessage: 'show me incidents',
       assistantResponse: 'Here are the incidents',
-      toolResults: [
+      timestamp: now,
+      entities: [
         {
-          name: 'query-incidents',
-          result: [
-            { id: 'inc-002', title: 'Minor incident' },
-            { id: 'inc-005', title: 'Major incident' },
-            { id: 'inc-008', title: 'Medium incident' }
-          ]
+          type: 'incident' as const,
+          value: 'inc-002',
+          prominence: 0.5,
+          extractedAt: now,
+          source: 'query-incidents'
+        },
+        {
+          type: 'incident' as const,
+          value: 'inc-005',
+          prominence: 0.9, // Highest prominence
+          extractedAt: now,
+          source: 'query-incidents'
+        },
+        {
+          type: 'incident' as const,
+          value: 'inc-008',
+          prominence: 0.7,
+          extractedAt: now,
+          source: 'query-incidents'
         }
-      ],
-      timestamp: now
+      ]
     }
   ];
 
   const resolutions = await resolver.resolveReferences('tell me more about that incident', context, conversationHistory);
 
   assert.ok(resolutions.has('that incident'));
-  //  Should pick one of the incidents (handlers return the first one found)
+  // Should pick the incident with highest prominence
   const resolved = resolutions.get('that incident');
-  assert.ok(resolved === 'inc-002' || resolved === 'inc-005' || resolved === 'inc-008');
+  assert.equal(resolved, 'inc-005');
 });

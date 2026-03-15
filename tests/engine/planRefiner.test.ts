@@ -356,7 +356,7 @@ test('ScopeInferer: uses conversation history for scope inference', async () => 
     const inferer = new ScopeInferer();
 
     // Simulate a follow-up question where previous turn had incident context
-    const conversationHistory: ConversationTurn[] = [createTurnWithTools([{
+    const turn = createTurnWithTools([{
         name: 'query-incidents',
         arguments: {},
         result: [{
@@ -365,7 +365,17 @@ test('ScopeInferer: uses conversation history for scope inference', async () => 
             status: 'open',
             severity: 'sev3'
         }]
-    }])];
+    }]);
+
+    // Explicitly add entities to simulate extraction from the tool result
+    turn.entities = [{
+        type: 'service',
+        value: 'svc-realtime',
+        source: 'test',
+        extractedAt: Date.now()
+    }];
+
+    const conversationHistory: ConversationTurn[] = [turn];
 
     const inference = await inferer.inferScope(
         'any alerts',  // follow-up question

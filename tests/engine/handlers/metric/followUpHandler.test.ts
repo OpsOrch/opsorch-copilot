@@ -72,7 +72,7 @@ test('metricFollowUpHandler', async (t) => {
         // The previous file content shows: if (metricName.toLowerCase().includes("latency") || metricName.toLowerCase().includes("error"))
         // So cpu_usage should NOT trigger log query.
         // With enhanced LogQueryGenerator, cpu_usage should triggers 'cpu' related logs (and alerts)
-        assert.equal(suggestions.length, 2);
+        assert.equal(suggestions.length, 3);
         const logsSuggestion = suggestions.find(s => s.name === 'query-logs');
         assert.ok(logsSuggestion);
         const logsArgs = logsSuggestion.arguments as unknown as LogQueryArgs;
@@ -186,5 +186,58 @@ test('metricFollowUpHandler', async (t) => {
         const deploymentsSuggestion = suggestions.find(s => s.name === 'query-deployments');
         assert.ok(!deploymentsSuggestion, 'should NOT duplicate query-deployments');
     });
-});
 
+    await t.test('should turn describe-metrics into query-metrics for investigative requests', async () => {
+        const context: HandlerContext = {
+            ...baseContext,
+            userQuestion: 'find the root cause and check cpu metrics',
+            toolResults: [{
+                name: 'query-incidents',
+                arguments: { limit: 1 },
+                result: [{
+                    id: 'INC-200',
+                    service: 'svc-api',
+                    startTime: '2024-01-01T00:00:00Z',
+                    endTime: '2024-01-01T00:30:00Z',
+                }],
+            }],
+        };
+        const result: ToolResult = {
+            name: 'describe-metrics',
+            arguments: { scope: { service: 'svc-api' } },
+            result: ['cpu_usage', 'memory_usage'],
+        };
+
+        const suggestions = await metricFollowUpHandler(context, result);
+        const metricsSuggestion = suggestions.find(s => s.name === 'query-metrics');
+
+        assert.ok(metricsSuggestion, 'should suggest query-metrics after metric discovery');
+        const args = metricsSuggestion!.arguments as {
+            scope: { service: string };
+            expression: { metricName: string };
+            start: string;
+            end: string;
+            step: number;
+        };
+        assert.equal(args.scope.service, 'svc-api');
+        assert.equal(args.expression.metricName, 'cpu_usage');
+        assert.equal(args.step, 60);
+        assert.ok(Number.isFinite(Date.parse(args.start)));
+        assert.ok(Number.isFinite(Date.parse(args.end)));
+    });
+
+    await t.test('should not query metrics for discovery-only requests', async () => {
+        const context: HandlerContext = {
+            ...baseContext,
+            userQuestion: 'what metrics are available for svc-api',
+        };
+        const result: ToolResult = {
+            name: 'describe-metrics',
+            arguments: { scope: { service: 'svc-api' } },
+            result: ['cpu_usage', 'memory_usage'],
+        };
+
+        const suggestions = await metricFollowUpHandler(context, result);
+        assert.equal(suggestions.some(s => s.name === 'query-metrics'), false);
+    });
+});

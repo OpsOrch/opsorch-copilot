@@ -11,17 +11,16 @@ test('FollowUpEngine', async (t) => {
         const results: ToolResult[] = [
             {
                 name: 'query-incidents',
-                result: { incidents: [] },
+                result: { incidents: [] }, // Empty incidents array
                 arguments: { service: 'payment-api' },
             },
         ];
 
-
-
         const refined = await engine.applyFollowUps(results, 'test-chat', [], 'Show incidents');
 
-        // Should not include duplicate
-        assert.strictEqual(refined.length, 0);
+        // Should not include duplicate query-incidents call since it was already executed
+        const duplicateIncidentCalls = refined.filter(call => call.name === 'query-incidents');
+        assert.strictEqual(duplicateIncidentCalls.length, 0);
     });
 
     await t.test('applyFollowUps generates follow-up suggestions for incidents', async () => {

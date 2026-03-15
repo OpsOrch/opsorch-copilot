@@ -20,7 +20,7 @@ import { QueryBuilderHandler } from "../handlers.js";
 import { JsonObject } from "../../../types.js";
 
 export const metricQueryBuilder: QueryBuilderHandler = async (
-    _context,
+    context,
     _toolName,
     naturalLanguage,
 ): Promise<JsonObject> => {
@@ -42,7 +42,30 @@ export const metricQueryBuilder: QueryBuilderHandler = async (
     } else if (lower.includes("request") || lower.includes("throughput")) {
         expression.metricName = "requests";
     }
-    // Note: We don't guess names like "error_rate" that may not exist
+
+    // If no hint from natural language, try to use a discovered metric from describe-metrics results
+    if (!expression.metricName) {
+        for (const result of context.toolResults) {
+            if (result.name === "describe-metrics") {
+                const data = result.result;
+                const list = Array.isArray(data) ? data
+                    : (data && typeof data === "object" && Array.isArray((data as Record<string, unknown>).metrics))
+                        ? (data as Record<string, unknown>).metrics as unknown[]
+                        : null;
+                if (list && list.length > 0) {
+                    const first = list[0];
+                    const name = typeof first === "string" ? first
+                        : (first && typeof first === "object" && "name" in (first as object))
+                            ? String((first as Record<string, unknown>).name)
+                            : undefined;
+                    if (name) {
+                        expression.metricName = name;
+                        break;
+                    }
+                }
+            }
+        }
+    }
 
     // MCP schema: start/end must be ISO 8601 datetime
     const now = new Date();

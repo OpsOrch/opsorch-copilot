@@ -71,7 +71,9 @@ export class PlanRefiner {
       );
 
       // Also run basic schema validation as a fallback/safety check
-      const schemaValidation = validateToolCall(call, tool);
+      // Use normalizedArgs if available (validation handler may have fixed the args)
+      const argsForSchemaValidation = validation.normalizedArgs ?? call.arguments;
+      const schemaValidation = validateToolCall({ ...call, arguments: argsForSchemaValidation }, tool);
 
       if (validation.valid && schemaValidation.valid) {
         // Use normalized (fixed) arguments if available
@@ -94,7 +96,8 @@ export class PlanRefiner {
       }
     }
 
-    // Return replacement calls first, then valid calls
+    // If any replacements were generated, return replacements + other valid calls.
+    // Only the invalid call is replaced; other valid calls (e.g. query-logs) still run.
     const validCalls = validatedCalls.filter((v) => v.valid).map((v) => v.call);
     return [...replacementCalls, ...validCalls];
   }

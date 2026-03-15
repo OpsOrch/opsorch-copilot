@@ -324,6 +324,7 @@ export class CopilotEngine {
     const allExtractedEntities: Entity[] = [];
     let iteration = 0;
     let isFirstIteration = true;
+    let hadPlannedCalls = false;
 
     // Step 4: Reasoning Loop
     while (iteration < this.maxIterations) {
@@ -420,6 +421,11 @@ export class CopilotEngine {
 
       // Limit calls
       plannedCalls = this.limitToolCalls(plannedCalls);
+
+      // Track if any calls were ever planned (before toolRunner filtering)
+      if (plannedCalls.length > 0) {
+        hadPlannedCalls = true;
+      }
 
       // B. Check Stop Condition
       if (plannedCalls.length === 0) {
@@ -532,6 +538,14 @@ export class CopilotEngine {
       chatId,
       this.config.llm,
     );
+
+    // If calls were planned but no results were collected, tool calls were likely
+    // skipped due to unresolved placeholder arguments (e.g. {{incidentId}})
+    if (hadPlannedCalls && allResults.length === 0) {
+      answer.missing = answer.missing
+        ? [...answer.missing, 'tool outputs']
+        : ['tool outputs'];
+    }
 
     // Step 6: Create TurnExecutionTrace from ExecutionTrace
     const turnTrace: TurnExecutionTrace = {

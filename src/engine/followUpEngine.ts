@@ -29,6 +29,7 @@ export class FollowUpEngine {
           chatId,
           conversationHistory,
           userQuestion,
+          toolResults,
         );
 
         try {
@@ -66,12 +67,13 @@ export class FollowUpEngine {
     chatId: string,
     conversationHistory: ConversationTurn[],
     userQuestion: string,
+    currentResults: ToolResult[],
   ): HandlerContext {
     return {
       chatId,
       turnNumber: conversationHistory.length,
       conversationHistory,
-      toolResults: [result],
+      toolResults: currentResults,
       userQuestion,
     };
   }
