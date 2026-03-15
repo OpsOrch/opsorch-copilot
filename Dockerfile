@@ -35,4 +35,4 @@ EXPOSE 6060
 
 ENV PORT=6060
 
-CMD ["node", "dist/server.js"]
+CMD ["node", "dist/src/server.js"]

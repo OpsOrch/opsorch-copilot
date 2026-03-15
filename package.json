@@ -20,7 +20,7 @@
     "incident-response"
   ],
   "type": "module",
-  "main": "dist/index.js",
+  "main": "dist/src/server.js",
   "engines": {
     "node": ">=20"
   },
