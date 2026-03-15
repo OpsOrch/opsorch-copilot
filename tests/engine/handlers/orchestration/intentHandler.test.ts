@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { orchestrationIntentHandler } from '../../../../../src/engine/handlers/orchestration/intentHandler.js';
-import { HandlerContext } from '../../../../../src/types.js';
+import { orchestrationIntentHandler } from '../../../../src/engine/handlers/orchestration/intentHandler.js';
+import type { HandlerContext } from '../../../../src/types.js';
 
 test('orchestrationIntentHandler', async (t) => {
     const context: HandlerContext = {

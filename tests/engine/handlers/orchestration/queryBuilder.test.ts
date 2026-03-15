@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { orchestrationQueryBuilder } from '../../../../../src/engine/handlers/orchestration/queryBuilder.js';
-import { HandlerContext } from '../../../../../src/types.js';
+import { orchestrationQueryBuilder } from '../../../../src/engine/handlers/orchestration/queryBuilder.js';
+import type { HandlerContext } from '../../../../src/types.js';
 
 test('orchestrationQueryBuilder', async (t) => {
     const context: HandlerContext = {

@@ -1,9 +1,29 @@
 {
   "name": "opsorch-copilot",
   "version": "0.1.0",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OpsOrch/opsorch-copilot.git"
+  },
+  "bugs": {
+    "url": "https://github.com/OpsOrch/opsorch-copilot/issues"
+  },
+  "homepage": "https://github.com/OpsOrch/opsorch-copilot#readme",
   "description": "OpsOrch Copilot runtime orchestration (LLM + MCP tool loop).",
+  "keywords": [
+    "opsorch",
+    "copilot",
+    "mcp",
+    "ai",
+    "operations",
+    "incident-response"
+  ],
   "type": "module",
   "main": "dist/index.js",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "tsc --noEmit false",
     "dev": "node --loader ts-node/esm src/server.ts",

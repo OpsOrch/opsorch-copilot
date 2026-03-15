@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { orchestrationEntityHandler } from '../../../../../src/engine/handlers/orchestration/entityHandler.js';
-import { HandlerContext } from '../../../../../src/types.js';
+import { orchestrationEntityHandler } from '../../../../src/engine/handlers/orchestration/entityHandler.js';
+import type { HandlerContext } from '../../../../src/types.js';
 
 test('orchestrationEntityHandler', async (t) => {
     const context: HandlerContext = {
