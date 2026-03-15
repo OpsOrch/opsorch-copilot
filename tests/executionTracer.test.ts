@@ -68,6 +68,22 @@ test('ExecutionTracer: records heuristic modifications', () => {
   assert.deepEqual(trace.iterations[0].heuristicModifications[0], modification);
 });
 
+test('ExecutionTracer: updates current iteration plan', () => {
+  const tracer = new ExecutionTracer();
+  const trace = tracer.startTrace('chat-1');
+
+  tracer.startIteration(trace, [{ name: 'query-incidents', arguments: {} }]);
+  tracer.updateIterationPlan(trace, [
+    { name: 'query-incidents', arguments: { limit: 10 } },
+    { name: 'query-logs', arguments: { scope: { service: 'payments' } } },
+  ]);
+
+  assert.deepEqual(trace.iterations[0].plannedTools, [
+    { name: 'query-incidents', arguments: { limit: 10 } },
+    { name: 'query-logs', arguments: { scope: { service: 'payments' } } },
+  ]);
+});
+
 test('ExecutionTracer: records tool executions', () => {
   const tracer = new ExecutionTracer();
   const trace = tracer.startTrace('chat-1');

@@ -121,6 +121,7 @@ export type ConversationTurn = {
   assistantResponse?: string;
   timestamp: number;
   entities?: Entity[];
+  toolResults?: ToolResult[];
   executionTrace?: TurnExecutionTrace; // Full execution trace for auditability
 };
 

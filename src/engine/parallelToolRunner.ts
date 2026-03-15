@@ -74,7 +74,7 @@ export class ParallelToolRunner {
     );
 
     for (let i = 0; i < batches.length; i++) {
-      const batch = batches[i];
+      const batch = this.resolveBatchDependencies(batches[i], results);
       console.log(
         `[ParallelToolRunner][${logId}] Batch ${i + 1}/${batches.length}: ${batch.map((c) => c.name).join(", ")}`,
       );
@@ -85,6 +85,92 @@ export class ParallelToolRunner {
     }
 
     return results;
+  }
+
+  private resolveBatchDependencies(
+    batch: ToolCall[],
+    previousResults: ToolResult[],
+  ): ToolCall[] {
+    return batch.map((call) => {
+      if (call.name === "get-incident-timeline" && !call.arguments?.id) {
+        const incidentId = this.findFirstId(previousResults, "query-incidents");
+        if (incidentId) {
+          return {
+            ...call,
+            arguments: {
+              ...call.arguments,
+              id: incidentId,
+            },
+          };
+        }
+      }
+
+      if (call.name === "get-ticket" && !call.arguments?.id) {
+        const ticketId = this.findFirstId(previousResults, "query-tickets");
+        if (ticketId) {
+          return {
+            ...call,
+            arguments: {
+              ...call.arguments,
+              id: ticketId,
+            },
+          };
+        }
+      }
+
+      return call;
+    });
+  }
+
+  private findFirstId(
+    results: ToolResult[],
+    sourceToolName: string,
+  ): string | undefined {
+    for (const result of results) {
+      if (result.name !== sourceToolName) continue;
+
+      const extracted = this.extractIdFromResult(result.result);
+      if (extracted) {
+        return extracted;
+      }
+    }
+
+    return undefined;
+  }
+
+  private extractIdFromResult(result: ToolResult["result"]): string | undefined {
+    if (Array.isArray(result)) {
+      for (const item of result) {
+        if (item && typeof item === "object" && !Array.isArray(item)) {
+          const maybeId = (item as Record<string, unknown>).id;
+          if (typeof maybeId === "string" && maybeId.trim()) {
+            return maybeId;
+          }
+        }
+      }
+      return undefined;
+    }
+
+    if (result && typeof result === "object") {
+      const record = result as Record<string, unknown>;
+      if (typeof record.id === "string" && record.id.trim()) {
+        return record.id;
+      }
+
+      const nestedArrays = Object.values(record).filter(Array.isArray) as unknown[][];
+      for (const arrayValue of nestedArrays) {
+        for (const item of arrayValue) {
+          if (item && typeof item === "object" && !Array.isArray(item)) {
+            const maybeId = (item as Record<string, unknown>).id;
+            if (typeof maybeId === "string" && maybeId.trim()) {
+              return maybeId;
+            }
+          }
+        }
+      }
+    }
+
+    return undefined;
   }
 
   /**

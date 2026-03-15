@@ -110,6 +110,18 @@ test('invalidates by tool name', () => {
     assert.deepEqual(cache.get({ name: 'query-logs', arguments: { query: 'error' } }), { name: 'query-logs', result: 'data2' });
 });
 
+test('cache entries are scoped by namespace', () => {
+    const cache = new ResultCache({ maxSize: 10, ttlMs: 60000 });
+    const call: ToolCall = { name: 'query-incidents', arguments: { limit: 5 } };
+
+    cache.set(call, { name: 'query-incidents', result: 'chat-a' }, 'chat-a');
+    cache.set(call, { name: 'query-incidents', result: 'chat-b' }, 'chat-b');
+
+    assert.deepEqual(cache.get(call, 'chat-a'), { name: 'query-incidents', result: 'chat-a' });
+    assert.deepEqual(cache.get(call, 'chat-b'), { name: 'query-incidents', result: 'chat-b' });
+    assert.equal(cache.get(call, 'chat-c'), null);
+});
+
 test('LRU: recently accessed items are not evicted', () => {
     const cache = new ResultCache({ maxSize: 3, ttlMs: 60000 });
 
@@ -293,4 +305,3 @@ test('expired entries count as misses', async () => {
     assert.equal(stats.hits, 1);
     assert.equal(stats.misses, 1);
 });
-

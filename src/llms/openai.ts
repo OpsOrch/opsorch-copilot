@@ -24,12 +24,10 @@ const ANY_JSON_SCHEMA: JsonObject = {
 function mapMessages(
   messages: LlmMessage[],
 ): Array<{ role: string; content: JsonValue }> {
-  return messages
-    .filter((m) => m.role !== "tool") // tool replies are not carried across
-    .map((m) => ({
-      role: m.role,
-      content: m.content,
-    }));
+  return messages.map((m) => ({
+    role: m.role === "tool" ? "user" : m.role,
+    content: m.role === "tool" ? formatToolMessage(m) : m.content,
+  }));
 }
 
 /**
@@ -62,6 +60,11 @@ function buildInputForResponses(
   }
 
   return [...systemLike, lastTurn];
+}
+
+function formatToolMessage(message: LlmMessage): string {
+  const toolName = message.toolName || "unknown-tool";
+  return `Tool result from ${toolName}:\n${message.content}`;
 }
 
 /**
@@ -326,10 +329,7 @@ export class OpenAiLlm implements LlmClient {
             }
 
             // Don't retry for 4xx errors (except 429)
-            console.warn(
-              "[OpenAI] Non-retryable error, returning empty response",
-            );
-            return null; // Signal non-retryable error
+            throw new Error(`OpenAI API error ${response.status}: ${text}`);
           }
 
           return response;
@@ -337,14 +337,6 @@ export class OpenAiLlm implements LlmClient {
         { maxRetries: 3, baseDelayMs: 1000 },
         "llm-openai",
       );
-
-      // Handle non-retryable error
-      if (res === null) {
-        return {
-          content: "",
-          toolCalls: [],
-        };
-      }
 
       const data = (await res.json()) as JsonObject;
       console.log("[OpenAI] raw response:", JSON.stringify(data));
@@ -487,13 +479,8 @@ export class OpenAiLlm implements LlmClient {
         toolCalls,
       };
     } catch (error) {
-      // Catch ANY error (network, parsing, etc.) and return empty response
       console.error("[OpenAI] Request failed:", error);
-      console.warn("[OpenAI] Returning empty response due to error");
-      return {
-        content: "",
-        toolCalls: [],
-      };
+      throw error;
     }
   }
 }

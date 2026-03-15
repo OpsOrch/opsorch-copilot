@@ -87,8 +87,14 @@ export class PlanRefiner {
         }
       } else if (validation.replacementCall) {
         // Validation failed but a replacement was suggested
-        console.log(`[PlanRefiner] Replacing ${call.name} with ${validation.replacementCall.name}`);
-        replacementCalls.push(validation.replacementCall);
+        if (tools.some((candidate) => candidate.name === validation.replacementCall?.name)) {
+          console.log(`[PlanRefiner] Replacing ${call.name} with ${validation.replacementCall.name}`);
+          replacementCalls.push(validation.replacementCall);
+        } else {
+          console.log(
+            `[PlanRefiner] Skipping replacement ${validation.replacementCall.name} for ${call.name} because the tool is unavailable`,
+          );
+        }
         validatedCalls.push({ call, valid: false });
       } else {
         // Validation failed with no replacement
@@ -183,4 +189,3 @@ export class PlanRefiner {
     return augmented;
   }
 }
-

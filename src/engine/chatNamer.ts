@@ -73,6 +73,9 @@ export class ChatNamer {
     // Determine intent from user message
     const intent = this.determineIntent(userMessage);
 
+    // Avoid redundant topic/service naming like "Payment Payment Issues"
+    this.deduplicateSemanticOverlap(mergedEntities);
+
     // Try to synthesize a name
     let name = this.synthesizeName(mergedEntities, intent, userMessage);
 
@@ -94,6 +97,30 @@ export class ChatNamer {
     });
 
     return sanitizedName;
+  }
+
+  private deduplicateSemanticOverlap(entities: ExtractedEntities): void {
+    if (entities.services.length === 0 || entities.topics.length === 0) {
+      return;
+    }
+
+    const topicSet = new Set(entities.topics.map((topic) => topic.toLowerCase()));
+    entities.services = entities.services.filter((service) => {
+      const normalizedService = service.toLowerCase();
+      for (const topic of topicSet) {
+        if (
+          normalizedService === topic ||
+          normalizedService.startsWith(`${topic}-`) ||
+          normalizedService.endsWith(`-${topic}`) ||
+          normalizedService.includes(`${topic}-service`) ||
+          normalizedService.includes(`${topic}-svc`) ||
+          normalizedService.includes(`${topic}-api`)
+        ) {
+          return false;
+        }
+      }
+      return true;
+    });
   }
 
   /**
@@ -359,10 +386,10 @@ export class ChatNamer {
       return `${topic} ${metric} Issues`;
     }
 
-    // Priority 6: Topic + Problems/Issues (e.g., "Payment Service Issues")
+    // Priority 6: Topic + Problems/Issues (e.g., "Payment Issues")
     if (topics.length > 0 && /problem|issue|error|fail/i.test(userMessage)) {
       const topic = this.formatTopicName(topics[0]);
-      return `${topic} Service Issues`;
+      return `${topic} Issues`;
     }
 
     // Priority 7: Topic + Intent (e.g., "Payment Investigation")

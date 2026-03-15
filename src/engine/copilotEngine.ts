@@ -155,7 +155,7 @@ export class CopilotEngine {
 
     // Step 1: Check cache for each call
     for (const call of calls) {
-      const cached = this.resultCache.get(call);
+      const cached = this.resultCache.get(call, chatId);
       if (cached) {
         console.log(
           `[Copilot][${chatId}] Using cached result for ${call.name}`,
@@ -225,6 +225,10 @@ export class CopilotEngine {
       for (let i = 0; i < callsToExecute.length; i++) {
         const result = freshResults[i];
         if (!result) continue; // Skip if somehow undefined
+        const executedCall: ToolCall = {
+          ...callsToExecute[i],
+          arguments: result.arguments ?? callsToExecute[i].arguments,
+        };
 
         const isError =
           typeof result.result === "object" &&
@@ -233,14 +237,14 @@ export class CopilotEngine {
 
         // Only cache if not an error
         if (!isError) {
-          this.resultCache.set(callsToExecute[i], result);
+          this.resultCache.set(executedCall, result, chatId);
         }
 
         // Record tool execution in trace
         if (trace) {
           this.executionTracer.recordToolExecution(trace, {
-            toolName: callsToExecute[i].name,
-            arguments: callsToExecute[i].arguments,
+            toolName: executedCall.name,
+            arguments: executedCall.arguments,
             cacheHit: false,
             executionTimeMs: Math.round(executionTime / callsToExecute.length), // Approximate per-tool time
             success: !isError,
@@ -304,6 +308,7 @@ export class CopilotEngine {
     const resolutions = await this.referenceResolver.resolveReferences(
       question,
       entityContext,
+      conversationTurns,
     );
     const resolvedQuestion = this.referenceResolver.applyResolutions(
       question,
@@ -421,6 +426,7 @@ export class CopilotEngine {
 
       // Limit calls
       plannedCalls = this.limitToolCalls(plannedCalls);
+      this.executionTracer.updateIterationPlan(trace, plannedCalls);
 
       // Track if any calls were ever planned (before toolRunner filtering)
       if (plannedCalls.length > 0) {
@@ -563,6 +569,7 @@ export class CopilotEngine {
       answer.conclusion,
       allExtractedEntities,
       turnTrace,
+      allResults,
     );
 
     // Step 8: Generate conversation name for new conversations only

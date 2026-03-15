@@ -11,6 +11,7 @@ import {
   Entity,
   ConversationContext,
   TurnExecutionTrace,
+  ToolResult,
 } from "../types.js";
 import { ConversationStore } from "../conversationStore.js";
 import { createConversationStore } from "../storeFactory.js";
@@ -99,6 +100,7 @@ export class ConversationManager {
     assistantResponse?: string,
     entities?: Entity[],
     executionTrace?: TurnExecutionTrace,
+    toolResults?: ToolResult[],
   ): Promise<void> {
     let conversation = await this.store.get(chatId);
 
@@ -119,6 +121,7 @@ export class ConversationManager {
       assistantResponse,
       timestamp: Date.now(),
       entities,
+      toolResults,
       executionTrace,
     });
 
@@ -135,8 +138,8 @@ export class ConversationManager {
 
   /**
    * Build LLM message history from conversation turns.
-   * Note: Tool results are no longer stored in turns (replaced by executionTrace).
-   * The message history now only includes user messages and assistant responses.
+   * Tool results are stored alongside turns so follow-up planning can reuse
+   * concrete outputs instead of relying only on assistant summaries.
    */
   async buildMessageHistory(chatId: string): Promise<LlmMessage[]> {
     const conversation = await this.getConversation(chatId);
@@ -152,6 +155,14 @@ export class ConversationManager {
         role: "user",
         content: turn.userMessage,
       });
+
+      for (const toolResult of turn.toolResults ?? []) {
+        messages.push({
+          role: "tool",
+          toolName: toolResult.name,
+          content: summarizeToolResult(toolResult),
+        });
+      }
 
       // Add assistant response if any
       if (turn.assistantResponse) {
@@ -292,5 +303,23 @@ export class ConversationManager {
    */
   getStore(): ConversationStore {
     return this.store;
+  }
+}
+
+function summarizeToolResult(toolResult: ToolResult): string {
+  const content = safeStringify(toolResult.result);
+  const suffix = content.length > 1000 ? `${content.slice(0, 1000)}...` : content;
+  return `${toolResult.name}: ${suffix}`;
+}
+
+function safeStringify(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
   }
 }

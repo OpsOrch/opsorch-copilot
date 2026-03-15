@@ -3,19 +3,15 @@ import { MockLlm } from "./llms/mock.js";
 import { OpenAiLlm } from "./llms/openai.js";
 import { AnthropicLlm } from "./llms/anthropic.js";
 import { GeminiLlm } from "./llms/gemini.js";
-import { NullLlm } from "./llms/null.js";
 
 export function createLlmFromEnv(): LlmClient {
-  const provider = (process.env.LLM_PROVIDER || "mock").toLowerCase();
+  const provider = (process.env.LLM_PROVIDER || "openai").toLowerCase();
   console.log(`[LlmFactory] Initializing LLM provider: ${provider}`);
 
   if (provider === "openai") {
     const key = process.env.OPENAI_API_KEY || "";
     if (!key) {
-      console.warn(
-        "OPENAI_API_KEY missing; using mock LLM. Set LLM_PROVIDER=openai and OPENAI_API_KEY to enable OpenAI.",
-      );
-      return new MockLlm();
+      throw new Error("OPENAI_API_KEY is required when LLM_PROVIDER=openai");
     }
     console.log(`[LlmFactory] Using OpenAI LLM`);
     return new OpenAiLlm(key);
@@ -23,10 +19,9 @@ export function createLlmFromEnv(): LlmClient {
   if (provider === "anthropic") {
     const key = process.env.ANTHROPIC_API_KEY;
     if (!key) {
-      console.warn(
-        "ANTHROPIC_API_KEY missing; using mock LLM. Set ANTHROPIC_API_KEY to enable Anthropic.",
+      throw new Error(
+        "ANTHROPIC_API_KEY is required when LLM_PROVIDER=anthropic",
       );
-      return new MockLlm();
     }
     console.log(`[LlmFactory] Using Anthropic LLM`);
     return new AnthropicLlm(key);
@@ -34,10 +29,7 @@ export function createLlmFromEnv(): LlmClient {
   if (provider === "gemini") {
     const key = process.env.GEMINI_API_KEY;
     if (!key) {
-      console.warn(
-        "GEMINI_API_KEY missing; using mock LLM. Set GEMINI_API_KEY to enable Gemini.",
-      );
-      return new MockLlm();
+      throw new Error("GEMINI_API_KEY is required when LLM_PROVIDER=gemini");
     }
     console.log(`[LlmFactory] Using Gemini LLM`);
     return new GeminiLlm(key);
@@ -46,6 +38,5 @@ export function createLlmFromEnv(): LlmClient {
     console.log(`[LlmFactory] Using Mock LLM`);
     return new MockLlm();
   }
-  console.log(`[LlmFactory] Unknown provider "${provider}", using Null LLM`);
-  return new NullLlm();
+  throw new Error(`Unsupported LLM_PROVIDER "${provider}"`);
 }

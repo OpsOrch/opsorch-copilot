@@ -251,3 +251,86 @@ test('drills into incident timelines/logs/metrics when user asks for root cause'
   assert.ok(callNames.includes('query-metrics'), 'Should query metrics');
   assert.ok(callNames.includes('query-logs'), 'Should query logs');
 });
+
+test('caches dependency-resolved detail calls by executed arguments, not unresolved plan args', async () => {
+  let latestIncidentId = 'INC-100';
+  const timelineCalls: string[] = [];
+
+  const llm: LlmClient = {
+    async chat(messages: LlmMessage[], tools: Tool[]) {
+      if (tools.length) {
+        const latestUserMessage =
+          [...messages].reverse().find((message) => message.role === 'user')?.content ?? '';
+
+        if (latestUserMessage === 'summarize first incident') {
+          return {
+            content: 'plan-first',
+            toolCalls: [
+              { name: 'query-incidents', arguments: { query: 'first' } as JsonObject },
+              { name: 'get-incident-timeline', arguments: {} as JsonObject },
+            ],
+          };
+        }
+
+        if (latestUserMessage === 'summarize second incident') {
+          return {
+            content: 'plan-second',
+            toolCalls: [
+              { name: 'query-incidents', arguments: { query: 'second' } as JsonObject },
+              { name: 'get-incident-timeline', arguments: {} as JsonObject },
+            ],
+          };
+        }
+
+        return { content: 'stop', toolCalls: [] };
+      }
+
+      return {
+        content: JSON.stringify({ conclusion: `timeline for ${latestIncidentId}`, evidence: [] }),
+        toolCalls: [],
+      };
+    },
+  };
+
+  const mcp: StubMcp = {
+    async listTools() {
+      return [
+        { name: 'query-incidents' } as Tool,
+        { name: 'get-incident-timeline' } as Tool,
+      ];
+    },
+    async callTool(call): Promise<ToolResult> {
+      if (call.name === 'query-incidents') {
+        latestIncidentId = (call.arguments.query === 'first') ? 'INC-100' : 'INC-200';
+        return {
+          name: call.name,
+          arguments: call.arguments,
+          result: [{ id: latestIncidentId }],
+        };
+      }
+
+      if (call.name === 'get-incident-timeline') {
+        const incidentId = String(call.arguments.id);
+        timelineCalls.push(incidentId);
+        return {
+          name: call.name,
+          arguments: call.arguments,
+          result: [{ incidentId, at: '2024-01-01T00:00:00Z', kind: 'event' }],
+        };
+      }
+
+      throw new Error(`unexpected call ${call.name}`);
+    },
+  };
+
+  const engine = makeEngine(llm, mcp);
+
+  const first = await engine.answer('summarize first incident');
+  await engine.answer('summarize second incident', { chatId: first.chatId });
+
+  assert.deepEqual(
+    timelineCalls,
+    ['INC-100', 'INC-200'],
+    'Timeline calls should use each resolved incident id instead of reusing a stale no-id cache entry',
+  );
+});

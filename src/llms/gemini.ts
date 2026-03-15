@@ -95,19 +95,19 @@ function mapMessagesForGemini(messages: LlmMessage[]): Array<{ role: string; par
             continue;
         }
 
-        if (msg.role === "tool") {
-            // Skip tool messages - Gemini handles these differently
-            continue;
-        }
-
         const role = msg.role === "assistant" ? "model" : "user";
         geminiMessages.push({
             role,
-            parts: [{ text: msg.content }],
+            parts: [{ text: msg.role === "tool" ? formatToolMessage(msg) : msg.content }],
         });
     }
 
     return geminiMessages;
+}
+
+function formatToolMessage(message: LlmMessage): string {
+    const toolName = message.toolName || "unknown-tool";
+    return `Tool result from ${toolName}:\n${message.content}`;
 }
 
 /**
@@ -227,11 +227,7 @@ export class GeminiLlm implements LlmClient {
             };
         } catch (error) {
             console.error("[Gemini] Request failed:", error);
-            console.warn("[Gemini] Returning empty response due to error");
-            return {
-                content: "",
-                toolCalls: [],
-            };
+            throw error;
         }
     }
 }

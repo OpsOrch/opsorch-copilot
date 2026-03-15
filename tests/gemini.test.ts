@@ -27,7 +27,7 @@ test("gemini", async (t) => {
         assert.ok(llm, "Should create GeminiLlm instance");
     });
 
-    await t.test("should handle errors gracefully and return empty response", async () => {
+    await t.test("should surface provider errors", async () => {
         const llm = new GeminiLlm("invalid-key-that-will-fail");
 
         const logs: string[] = [];
@@ -46,21 +46,11 @@ test("gemini", async (t) => {
         };
 
         try {
-            const response = await llm.chat(
-                [{ role: "user" as const, content: "Test message" }],
-                [],
-            );
-
-            // Should return empty response on error
-            assert.strictEqual(
-                response.content,
-                "",
-                "Should return empty content on error",
-            );
-            assert.strictEqual(
-                response.toolCalls?.length || 0,
-                0,
-                "Should have no tool calls on error",
+            await assert.rejects(
+                llm.chat(
+                    [{ role: "user" as const, content: "Test message" }],
+                    [],
+                ),
             );
 
             // Should log error details
@@ -68,11 +58,6 @@ test("gemini", async (t) => {
                 log.includes("[Gemini] Request failed"),
             );
             assert.ok(hasErrorLog, "Should log request failure");
-
-            const hasWarningLog = logs.some((log) =>
-                log.includes("[Gemini] Returning empty response due to error"),
-            );
-            assert.ok(hasWarningLog, "Should log empty response warning");
         } finally {
             console.log = originalLog;
             console.warn = originalWarn;
@@ -91,16 +76,18 @@ test("gemini", async (t) => {
         };
 
         try {
-            await llm.chat(
-                [
-                    { role: "user" as const, content: "First" },
-                    { role: "assistant" as const, content: "Response" },
-                    { role: "user" as const, content: "Second" },
-                ],
-                [
-                    { name: "tool1", description: "Test tool 1" },
-                    { name: "tool2", description: "Test tool 2" },
-                ],
+            await assert.rejects(
+                llm.chat(
+                    [
+                        { role: "user" as const, content: "First" },
+                        { role: "assistant" as const, content: "Response" },
+                        { role: "user" as const, content: "Second" },
+                    ],
+                    [
+                        { name: "tool1", description: "Test tool 1" },
+                        { name: "tool2", description: "Test tool 2" },
+                    ],
+                ),
             );
 
             // Should log request metadata

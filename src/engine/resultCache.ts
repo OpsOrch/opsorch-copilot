@@ -10,6 +10,7 @@ export const DEFAULT_CACHE_CONFIG: CacheConfig = {
 };
 
 type CacheEntry = {
+  scopeKey: string;
   call: ToolCall;
   result: ToolResult;
   timestamp: number;
@@ -96,6 +97,10 @@ function createExactCacheKey(call: ToolCall): string {
   return `${call.name}:${normalizeForHash(call.arguments || {})}`;
 }
 
+function createScopedCacheKey(scopeKey: string, call: ToolCall): string {
+  return `${scopeKey}::${createExactCacheKey(call)}`;
+}
+
 /**
  * LRU cache implementation for tool results.
  */
@@ -111,9 +116,9 @@ export class ResultCache {
    * Get a cached result if available and not expired.
    * Performs fuzzy matching on timestamps (window: 60s).
    */
-  get(call: ToolCall): ToolResult | null {
+  get(call: ToolCall, scopeKey: string = "global"): ToolResult | null {
     // 1. Try exact exact match first (fastest)
-    const exactKey = createExactCacheKey(call);
+    const exactKey = createScopedCacheKey(scopeKey, call);
     let entry = this.cache.get(exactKey);
     let matchedKey = exactKey;
 
@@ -121,6 +126,7 @@ export class ResultCache {
     if (!entry) {
       // This linear scan is acceptable because maxSize is small (default 100)
       for (const [key, candidate] of this.cache.entries()) {
+        if (candidate.scopeKey !== scopeKey) continue;
         if (candidate.call.name !== call.name) continue;
 
         // Deep comparison with fuzzy timestamps
@@ -157,8 +163,8 @@ export class ResultCache {
   /**
    * Store a result in the cache.
    */
-  set(call: ToolCall, result: ToolResult): void {
-    const key = createExactCacheKey(call);
+  set(call: ToolCall, result: ToolResult, scopeKey: string = "global"): void {
+    const key = createScopedCacheKey(scopeKey, call);
 
     // Remove existing entry if present
     if (this.cache.has(key)) {
@@ -174,6 +180,7 @@ export class ResultCache {
     }
 
     this.cache.set(key, {
+      scopeKey,
       call,
       result,
       timestamp: Date.now(),
@@ -184,8 +191,8 @@ export class ResultCache {
   /**
    * Check if a call result is cached and valid.
    */
-  has(call: ToolCall): boolean {
-    return this.get(call) !== null;
+  has(call: ToolCall, scopeKey: string = "global"): boolean {
+    return this.get(call, scopeKey) !== null;
   }
 
   /**
@@ -233,10 +240,13 @@ export class ResultCache {
   /**
    * Invalidate cache entries matching a tool name.
    */
-  invalidateByToolName(toolName: string): void {
-    const keysToRemove = Array.from(this.cache.keys()).filter((key) =>
-      key.startsWith(`${toolName}:`),
-    );
+  invalidateByToolName(toolName: string, scopeKey?: string): void {
+    const keysToRemove = Array.from(this.cache.entries())
+      .filter(([, entry]) =>
+        entry.call.name === toolName &&
+        (scopeKey === undefined || entry.scopeKey === scopeKey),
+      )
+      .map(([key]) => key);
 
     for (const key of keysToRemove) {
       this.cache.delete(key);

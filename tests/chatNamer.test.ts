@@ -239,6 +239,18 @@ describe('ChatNamer', () => {
       assert.ok(name.toLowerCase().includes('latency'));
     });
 
+    it('should avoid duplicate topic and service naming', () => {
+      const namer = new ChatNamer();
+      const name = namer.generateName(
+        'Show me payment-service issues',
+        'Payment-service is degraded',
+        Date.now(),
+        [{ type: 'service', value: 'payment-service', extractedAt: Date.now(), source: 'query-services' }]
+      );
+
+      assert.equal(name, 'Payment Issues');
+    });
+
     it('should synthesize metric correlation name', () => {
       const namer = new ChatNamer();
       const name = namer.generateName(

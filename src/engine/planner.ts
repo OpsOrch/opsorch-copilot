@@ -11,6 +11,10 @@ import { PlannerResponse } from "../types.js";
 
 const MAX_PLANNER_CALLS = 3;
 
+function formatErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export async function requestInitialPlan(
   question: string,
   llm: LlmClient,
@@ -48,9 +52,11 @@ export async function requestInitialPlan(
       `[Planner] Initial plan: No tool calls from LLM, falling back to JSON plan`,
     );
     // If the model didn't use tools directly, fall back to JSON-planned tool calls
-    return await requestJsonPlan(question, llm, tools);
+    return await requestJsonPlan(question, llm, tools, history, anchorTime);
   } catch (err) {
-    console.warn("LLM planning failed, falling back to heuristics:", err);
+    console.warn(
+      `LLM planning failed, falling back to heuristics: ${formatErrorMessage(err)}`,
+    );
     return {
       toolCalls: inferPlan(question),
     };
@@ -113,7 +119,9 @@ export async function requestFollowUpPlan(
       toolCalls: limitCalls(reply.toolCalls),
     };
   } catch (err) {
-    console.error("LLM refinement failed; skipping follow-up plan:", err);
+    console.error(
+      `LLM refinement failed; skipping follow-up plan: ${formatErrorMessage(err)}`,
+    );
     return { toolCalls: [] };
   }
 }
@@ -122,10 +130,16 @@ async function requestJsonPlan(
   question: string,
   llm: LlmClient,
   tools: Tool[],
+  history: LlmMessage[] = [],
+  anchorTime?: string,
 ): Promise<PlannerResponse> {
   const toolList = tools.map((t) => `- ${t.name}`).join("\n") || "No tools.";
   const messages: LlmMessage[] = [
     { role: "system", content: buildJsonPlannerPrompt(toolList) },
+    ...(anchorTime
+      ? [{ role: "system", content: `Current Time: ${anchorTime}` } as LlmMessage]
+      : []),
+    ...history,
     { role: "user", content: `User request: ${question}\nReturn only JSON.` },
   ];
 
@@ -139,7 +153,7 @@ async function requestJsonPlan(
     }
     return { toolCalls: [] };
   } catch (err) {
-    console.warn("LLM JSON planner failed:", err);
+    console.warn(`LLM JSON planner failed: ${formatErrorMessage(err)}`);
   }
 
   return {
