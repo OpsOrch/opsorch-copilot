@@ -1,6 +1,62 @@
 # OpsOrch Copilot
 
-OpsOrch Copilot is the AI runtime that orchestrates reasoning, prompting, and tool calls against `opsorch-mcp` so it can answer operational questions. Copilot never talks to OpsOrch Core directly; it only uses the MCP tools layer and returns structured answers for the Console UI.
+OpsOrch Copilot is the AI runtime for OpsOrch. It plans tool calls against `opsorch-mcp`, gathers evidence, and returns structured answers for the Console UI and other clients.
+
+Copilot never talks to OpsOrch Core directly. It only uses the MCP tools layer.
+
+## Status
+
+- License: Apache-2.0
+- Runtime: Node.js 20+
+- Transport: HTTP API
+- LLM providers: `mock`, `openai`, `anthropic`, `gemini`
+
+## Quick Start
+
+1. Start `opsorch-core`
+2. Start `opsorch-mcp`
+3. Start Copilot
+
+```bash
+cd opsorch-copilot
+npm install
+MCP_URL=http://localhost:7070/mcp \
+LLM_PROVIDER=mock \
+npm run dev
+```
+
+Health check:
+
+```bash
+curl http://localhost:6060/health
+```
+
+Chat request:
+
+```bash
+curl http://localhost:6060/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"What incidents are active right now?"}'
+```
+
+## Configuration
+
+Core runtime settings:
+
+- `PORT` - HTTP port for the Copilot API. Default: `6060`
+- `MCP_URL` - MCP endpoint URL. Default: `http://localhost:7070/mcp`
+- `LLM_PROVIDER` - `mock`, `openai`, `anthropic`, or `gemini`. Default: `mock`
+
+Provider-specific settings:
+
+- `OPENAI_API_KEY` with optional `OPENAI_MODEL` and `OPENAI_BASE_URL`
+- `ANTHROPIC_API_KEY` with optional `ANTHROPIC_MODEL` and `ANTHROPIC_BASE_URL`
+- `GEMINI_API_KEY` with optional `GEMINI_MODEL`
+
+Conversation storage:
+
+- `CONVERSATION_STORE_TYPE` - `memory` or `sqlite`. Default: `memory`
+- `SQLITE_DB_PATH` - SQLite DB path when using `sqlite`. Default: `./data/conversations.db`
 
 ## What Copilot should do
 
@@ -28,33 +84,18 @@ OpsOrch Copilot is the AI runtime that orchestrates reasoning, prompting, and to
 
 ## Development notes
 
-- MCP dev server: `http://localhost:7070` (from `opsorch-mcp`)
+- MCP dev server default: `http://localhost:7070/mcp`
 - Copilot communicates only via MCP tools; no direct Core calls.
-- See `AGENTS.md` for the full layered architecture overview.
-- See `DESIGN.md` for architectural details on capability-based handlers.
+- See `AGENTS.md` for the layered architecture overview.
+- See `DESIGN.md` for capability-handler details.
 
-### Runtime scaffold (this repo)
+Core implementation areas:
 
-- Install deps: `npm install`
-- Run API with mock LLM (default): `npm run dev` (uses `MCP_URL` env, default `http://localhost:7070/mcp`, `LLM_PROVIDER=mock`).
-- Core pieces live under `src/`:
-  - `engine/` – Copilot engine and handlers
-    - `copilotEngine.ts` – Main orchestration engine for answering operational questions
-    - `capabilityRegistry.ts` – Registry for all capability-specific handlers (12 registry types)
-    - `handlers/` – Capability-specific handlers organized by type (11 handler types across 6 domains)
-    - `planner.ts` – Initial and follow-up planning using LLM
-    - `planFallback.ts` – Heuristic fallback when LLM planning fails
-    - `contextManager.ts` – Smart context window management with token budgets
-    - `referenceResolver.ts` – Resolves references (e.g., "that incident") using conversation history
-    - `synthesis.ts` – LLM-based answer generation with evidence aggregation
-    - `retryStrategy.ts` – Exponential backoff with circuit breaker for resilient LLM/MCP calls
-    - `timelineSummarizer.ts` – Condenses long incident timelines to key events
-    - `timeWindowExpander.ts` – Automatically expands time windows for empty query results
-  - `mcpClient.ts` – Minimal MCP HTTP client for `tools/list` and `tools/call`
-  - `llms/mock.ts` – Mock LLM that returns deterministic tool plans and ids
-  - `llms/openai.ts` – OpenAI client; set `LLM_PROVIDER=openai` and `OPENAI_API_KEY`, optional `OPENAI_MODEL`/`OPENAI_BASE_URL`
-  - `server.ts` – HTTP API exposing Copilot chat with conversation IDs and pluggable LLM via env `LLM_PROVIDER`
-  - `stores/` – Conversation storage implementations (in-memory and SQLite)
+- `src/engine/` - planning, execution, follow-ups, references, synthesis
+- `src/llms/` - LLM provider adapters
+- `src/mcps/` - MCP client implementations
+- `src/stores/` - in-memory and SQLite conversation stores
+- `src/server.ts` - HTTP API
 
 ### Capability-Based Handler Architecture
 
@@ -112,8 +153,11 @@ All handlers are registered in `capabilityRegistry.ts` and invoked by the engine
 - `POST /chat` – body `{ "message": "<question>", "chatId?": "<reuse-id>" }`
   - Response: `{ "chatId": "<id>", "answer": { conclusion, evidence?, missing?, references?, chatId? } }`
   - `answer.references` drives Console deep links and includes buckets for `incidents[]`, `services[]`, `tickets[]`, `alerts[]`, plus structured `metrics[]`/`logs[]` entries (each with expression + window)
-  - Stateless: no server-side conversation store. If `chatId` is not provided, the response echoes provider-supplied IDs so callers can persist and reuse them.
+  - If `chatId` is not provided, the response includes one so callers can persist and reuse it.
 - `GET /health` – liveness check: `{ "status": "ok" }`
+- `GET /chats` – list saved conversations with previews and pagination
+- `GET /chats/search?query=...` – search saved conversations
+- `GET /chats/:id` – retrieve a single saved conversation
 
 ### Conversation Storage
 
@@ -141,7 +185,7 @@ CONVERSATION_STORE_TYPE=sqlite
 SQLITE_DB_PATH=/path/to/conversations.db
 ```
 
-**Docker Example:**
+Docker example:
 
 ```yaml
 services:
@@ -156,7 +200,7 @@ volumes:
   copilot-data:
 ```
 
-**Backup and Recovery:**
+Backup and recovery:
 
 For SQLite storage, regular backups of the database file are recommended:
 
@@ -170,57 +214,22 @@ cp /path/to/backup/conversations-20250122.db /path/to/conversations.db
 
 ## Testing
 
-### Unit Tests (40+ test files)
-Comprehensive test coverage organized by component:
+```bash
+npm test
+npm run type-check
+```
 
-**Engine & Orchestration:**
-- `copilotEngine.planning.test.ts` – LLM-based planning and tool selection
-- `copilotEngine.followups.test.ts` – Follow-up generation and suggestion engine
-- `entityExtractor.test.ts` – Entity extraction from tool results
-- `referenceResolver.test.ts` – Reference resolution with conversation history
-- `followUpEngine.test.ts` – Follow-up recommendations
+Coverage includes:
 
-**Capability Handlers:**
-- `intentClassifier.test.ts` – Intent detection and classification
-- `engine/scopeInferer.test.ts` – Scope inference and parameterization
-- `engine/synthesis.test.ts` – Answer synthesis and evidence aggregation
-
-**Conversation Management:**
-- `conversationManager.test.ts` – Multi-turn conversation tracking
-- `conversationStore.test.ts` – In-memory conversation persistence
-- `sqliteConversationStore.test.ts` – SQLite-backed persistence with LRU eviction
-- `conversationSearch.test.ts` – Full-text search and filtering
-- `conversationHistory.test.ts` – Conversation history retrieval
-
-**Tool Execution:**
-- `toolRunner.test.ts` – Tool call execution and result normalization
-- `parallelToolRunner.test.ts` – Concurrent tool execution
-- `resultCache.test.ts` – Result caching to prevent duplicates
-
-**Analysis & Synthesis:**
-- `anomalyDetector.test.ts` – Anomaly detection in time series
-- `correlationDetector.test.ts` – Signal correlation analysis
-- `answerFormatter.test.ts` – Evidence formatting and reference building
-- `timeWindowExpander.test.ts` – Time window expansion and calculation
-
-**Utilities & Infrastructure:**
-- `chatNamer.test.ts` – Conversation naming and summarization
-- `serviceDiscovery.test.ts` – Service lookup and caching
-- `timestampUtils.test.ts` – Timestamp parsing and formatting
-- `metricUtils.test.ts` – Metric parsing and aggregation
-- `toolsSchema.test.ts` – Tool schema validation
-
-**Server & Configuration:**
-- `server.test.ts` – HTTP API endpoints
-- `mcpFactory.test.ts` – MCP client factory
-- `llmFactory.test.ts` – LLM provider factory
-- `storeFactory.test.ts` – Conversation store factory
-
-Run all tests: `npm test`
+- planner and tool execution loops
+- conversation history and storage backends
+- MCP integration layers
+- capability handlers and follow-ups
+- HTTP API behavior
 
 ### Integration Testing
 Start the full stack for end-to-end testing:
-1. Start Core: `cd ../opsorch-core && npm run dev`
+1. Start Core: `cd ../opsorch-core && go run ./cmd/opsorch`
 2. Start MCP: `cd ../opsorch-mcp && npm run dev`
 3. Start Copilot: `npm run dev`
 4. Start Console: `cd ../opsorch-console && npm run dev`
@@ -255,3 +264,7 @@ This will:
 - Distribute conversations across the last 30 days
 
 The seed script uses the database path from `SQLITE_DB_PATH` environment variable or defaults to `./data/conversations.db`.
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE).

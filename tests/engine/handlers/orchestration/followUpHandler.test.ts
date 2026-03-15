@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { orchestrationFollowUpHandler } from '../../../../../src/engine/handlers/orchestration/followUpHandler.js';
-import { HandlerContext } from '../../../../../src/types.js';
+import { orchestrationFollowUpHandler } from '../../../../src/engine/handlers/orchestration/followUpHandler.js';
+import type { HandlerContext, ToolCall } from '../../../../src/types.js';
 
 test('orchestrationFollowUpHandler', async (t) => {
     const context: HandlerContext = {
@@ -19,7 +19,7 @@ test('orchestrationFollowUpHandler', async (t) => {
         };
         const followUps = await orchestrationFollowUpHandler(context, toolResult);
 
-        const planQueryCall = followUps.find(c => c.name === 'query-orchestration-plans');
+        const planQueryCall = followUps.find((c: ToolCall) => c.name === 'query-orchestration-plans');
         assert.ok(planQueryCall);
         assert.deepEqual(planQueryCall?.arguments, { scope: { service: 'payment-service' } });
     });
@@ -31,7 +31,7 @@ test('orchestrationFollowUpHandler', async (t) => {
         };
         const followUps = await orchestrationFollowUpHandler(context, toolResult);
 
-        const planQueryCall = followUps.find(c => c.name === 'query-orchestration-plans');
+        const planQueryCall = followUps.find((c: ToolCall) => c.name === 'query-orchestration-plans');
         assert.ok(planQueryCall);
         assert.deepEqual(planQueryCall?.arguments, { query: 'incident response' });
     });

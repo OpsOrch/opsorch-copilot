@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { orchestrationReferenceHandler } from '../../../../../src/engine/handlers/orchestration/referenceHandler.js';
-import { HandlerContext } from '../../../../../src/types.js';
+import { orchestrationReferenceHandler } from '../../../../src/engine/handlers/orchestration/referenceHandler.js';
+import type { Entity, HandlerContext } from '../../../../src/types.js';
 
 test('orchestrationReferenceHandler', async (t) => {
     const baseContext: HandlerContext = {
@@ -19,7 +19,7 @@ test('orchestrationReferenceHandler', async (t) => {
                 userMessage: 'list plans',
                 timestamp: Date.now(),
                 entities: [{
-                    type: 'orchestration_plan' as any,
+                    type: 'orchestration_plan' as Entity['type'],
                     value: 'plan-abc',
                     extractedAt: Date.now(),
                     source: 'test',
@@ -39,7 +39,7 @@ test('orchestrationReferenceHandler', async (t) => {
                 userMessage: 'find runbooks',
                 timestamp: Date.now(),
                 entities: [{
-                    type: 'orchestration_plan' as any,
+                    type: 'orchestration_plan' as Entity['type'],
                     value: 'runbook-123',
                     extractedAt: Date.now(),
                     source: 'test',
@@ -73,7 +73,7 @@ test('orchestrationReferenceHandler', async (t) => {
                 userMessage: 'list plans',
                 timestamp: Date.now(),
                 entities: [{
-                    type: 'orchestration_plan' as any,
+                    type: 'orchestration_plan' as Entity['type'],
                     value: 'plan-abc',
                     extractedAt: Date.now(),
                     source: 'test'
