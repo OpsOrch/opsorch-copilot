@@ -5,6 +5,10 @@ import { withRetry } from "./retryStrategy.js";
 import { validateToolCall } from "./toolsSchema.js";
 import { TimeWindowExpander } from "./timeWindowExpander.js";
 
+function formatErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export async function runToolCalls(
   calls: ToolCall[],
   mcp: McpClient,
@@ -116,13 +120,12 @@ export async function runToolCalls(
       return toolResult;
     } catch (err) {
       console.error(
-        `[Copilot][${logId}] Tool ${call.name} failed with error:`,
-        err,
+        `[Copilot][${logId}] Tool ${call.name} failed with error: ${formatErrorMessage(err)}`,
       );
       // Return error as a result instead of throwing, for partial success handling
       return {
         name: call.name,
-        result: { error: err instanceof Error ? err.message : String(err) },
+        result: { error: formatErrorMessage(err) },
         arguments: sanitizedArgs,
         callId: call.callId,
       } satisfies ToolResult;

@@ -5,34 +5,21 @@ import { makeEngine, StubMcp } from './helpers/copilotTestUtils.js';
 
 test('passes conversation history to LLM for contextual follow-up questions', async () => {
     const receivedMessages: LlmMessage[][] = [];
+    const toolCalls: Array<{ name: string; arguments?: JsonObject }> = [];
 
     const llm: LlmClient = {
         async chat(messages: LlmMessage[], tools: Tool[]) {
             receivedMessages.push([...messages]);
+            const latestUserMessage = [...messages].reverse().find((message) => message.role === 'user')?.content ?? '';
 
-            // First turn: "what services are running?"
-            if (receivedMessages.length === 1 && tools.length > 0) {
+            if (tools.length > 0 && latestUserMessage === 'what services are running?') {
                 return {
                     content: 'plan',
                     toolCalls: [{ name: 'query-services', arguments: {} }],
                 };
             }
 
-            // First turn synthesis
-            if (receivedMessages.length === 2 && tools.length === 0) {
-                return {
-                    content: JSON.stringify({
-                        conclusion: 'The payment-service is running.',
-                        evidence: ['Found payment-service in service list'],
-                        confidence: 0.95
-                    }),
-                };
-            }
-
-            // Second turn: "are there any incidents related to this service"
-            // Should have history of previous conversation
-            if (receivedMessages.length === 3 && tools.length > 0) {
-                // Verify history is present
+            if (tools.length > 0 && latestUserMessage === 'are there any incidents related to this service') {
                 const hasHistory = messages.some(m =>
                     m.role === 'user' && m.content.includes('what services are running')
                 );
@@ -49,12 +36,13 @@ test('passes conversation history to LLM for contextual follow-up questions', as
                 };
             }
 
-            // Second turn synthesis
             return {
                 content: JSON.stringify({
-                    conclusion: 'No incidents for payment-service',
+                    conclusion: latestUserMessage.includes('what services are running')
+                        ? 'The payment-service is running.'
+                        : 'No incidents for payment-service',
                     evidence: [],
-                    confidence: 0.9
+                    confidence: 0.9,
                 }),
             };
         },
@@ -68,16 +56,11 @@ test('passes conversation history to LLM for contextual follow-up questions', as
             ];
         },
         async callTool(call) {
+            toolCalls.push({ name: call.name, arguments: call.arguments as JsonObject });
             if (call.name === 'query-services') {
                 return { name: 'query-services', result: { services: ['payment-service'] } };
             }
             if (call.name === 'query-incidents') {
-                // Verify the LLM resolved "this service" correctly
-                assert.deepEqual(
-                    (call.arguments as JsonObject)?.scope,
-                    { service: 'payment-service' },
-                    'LLM should resolve "this service" to "payment-service" using history'
-                );
                 return { name: 'query-incidents', result: [] };
             }
             return { name: call.name, result: null };
@@ -96,6 +79,13 @@ test('passes conversation history to LLM for contextual follow-up questions', as
     // Verify we got both answers
     assert.ok(answer1.conclusion.includes('payment-service'));
     assert.ok(answer2.conclusion.length > 0);
+    const incidentCall = toolCalls.find((call) => call.name === 'query-incidents');
+    assert.ok(incidentCall, 'Expected query-incidents to run on follow-up');
+    assert.deepEqual(
+        incidentCall?.arguments?.scope,
+        { service: 'payment-service' },
+        'Follow-up incident query should inherit the referenced service'
+    );
 
     assert.ok(receivedMessages.length >= 3, 'Should have made multiple LLM calls with history');
 });
@@ -106,50 +96,24 @@ test('passes tool results from previous turns to LLM', async () => {
     const llm: LlmClient = {
         async chat(messages: LlmMessage[], _tools: Tool[]) {
             receivedMessages.push([...messages]);
-            const callIndex = receivedMessages.length;
+            const latestUserMessage = [...messages].reverse().find((message) => message.role === 'user')?.content ?? '';
 
-            // First turn: "check metrics"
-            if (callIndex === 1) {
+            if (latestUserMessage === 'check services') {
                 return {
-                    content: 'Checking metrics...',
-                    toolCalls: [{ name: 'query-metrics', arguments: { metric: 'cpu' } }],
+                    content: 'Checking services...',
+                    toolCalls: [{ name: 'query-services', arguments: {} }],
                 };
             }
 
-            // First turn synthesis
-            if (callIndex === 2) {
+            if (latestUserMessage === 'what did it return?') {
                 return {
-                    content: JSON.stringify({
-                        conclusion: 'CPU is high (95%).',
-                        evidence: ['CPU metrics show 95% utilization.'],
-                        confidence: 1.0
-                    }),
+                    content: 'No additional tool needed.',
                 };
-            }
-
-            // Second turn: "why is it high?"
-            if (receivedMessages.length === 3) { // Note: In our mock counting, this might be index 3 or 4 depending on test run,
-                // but let's stick to the logic that worked or simplify.
-                // Actually, checking content is safer.
-
-                const toolMessage = messages.find(m => m.role === 'tool');
-
-                // Only assert if we are in the Planning call (which has tool messages)
-                // The Planning call has History. The Analysis call has "You are OpsOrch..."
-                if (messages[0]?.role === 'system') { // Heuristic to identify Plan call
-                    assert.ok(toolMessage, 'History should contain tool messages');
-                    assert.ok(toolMessage.content.includes('95'), 'History should contain tool result content');
-
-                    return {
-                        content: 'Analyzing logs...',
-                        toolCalls: [{ name: 'query-logs', arguments: {} }]
-                    };
-                }
             }
 
             return {
                 content: JSON.stringify({
-                    conclusion: 'Logs show infinite loop.',
+                    conclusion: 'The payment-service is active.',
                     evidence: [],
                     confidence: 0.9
                 }),
@@ -158,10 +122,10 @@ test('passes tool results from previous turns to LLM', async () => {
     };
 
     const mcp: StubMcp = {
-        async listTools() { return [{ name: 'query-metrics' }, { name: 'query-logs' }] as Tool[]; },
+        async listTools() { return [{ name: 'query-services' }] as Tool[]; },
         async callTool(call) {
-            if (call.name === 'query-metrics') {
-                return { name: 'query-metrics', result: { value: 95, unit: '%' } };
+            if (call.name === 'query-services') {
+                return { name: 'query-services', result: { services: ['payment-service'] } };
             }
             return { name: call.name, result: null };
         }
@@ -170,10 +134,17 @@ test('passes tool results from previous turns to LLM', async () => {
     const engine = makeEngine(llm, mcp);
 
     // Turn 1
-    const ans1 = await engine.answer('check metrics');
+    const ans1 = await engine.answer('check services');
 
     // Turn 2
-    await engine.answer('why is it high?', { chatId: ans1.chatId });
+    await engine.answer('what did it return?', { chatId: ans1.chatId });
 
+    const followUpPlanningMessages = receivedMessages.find((messages) =>
+        messages.some((message) => message.role === 'user' && message.content === 'what did it return?')
+    );
+    assert.ok(followUpPlanningMessages, 'Expected a follow-up planning call');
+    const toolMessage = followUpPlanningMessages.find(m => m.role === 'tool');
+    assert.ok(toolMessage, 'History should contain tool messages');
+    assert.ok(toolMessage.content.includes('payment-service'), 'History should contain tool result content');
     assert.ok(receivedMessages.length >= 3);
 });

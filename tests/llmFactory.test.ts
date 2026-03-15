@@ -5,7 +5,6 @@ import { OpenAiLlm } from '../src/llms/openai.js';
 import { AnthropicLlm } from '../src/llms/anthropic.js';
 import { GeminiLlm } from '../src/llms/gemini.js';
 import { MockLlm } from '../src/llms/mock.js';
-import { NullLlm } from '../src/llms/null.js';
 
 test('llmFactory', async (t) => {
     const originalEnv = { ...process.env };
@@ -23,9 +22,11 @@ test('llmFactory', async (t) => {
         process.env = originalEnv;
     });
 
-    await t.test('defaults to openai (mock) if no provider set and no key', () => {
-        const llm = createLlmFromEnv();
-        assert.ok(llm instanceof MockLlm, 'Should fallback to MockLlm when key is missing for default provider');
+    await t.test('defaults to openai and throws if key is missing', () => {
+        assert.throws(
+            () => createLlmFromEnv(),
+            /OPENAI_API_KEY is required when LLM_PROVIDER=openai/,
+        );
     });
 
     await t.test('creates OpenAiLlm when provider is openai and key is present', () => {
@@ -35,11 +36,13 @@ test('llmFactory', async (t) => {
         assert.ok(llm instanceof OpenAiLlm);
     });
 
-    await t.test('creates MockLlm when provider is openai but key is missing', () => {
+    await t.test('throws when provider is openai but key is missing', () => {
         process.env.LLM_PROVIDER = 'openai';
         delete process.env.OPENAI_API_KEY;
-        const llm = createLlmFromEnv();
-        assert.ok(llm instanceof MockLlm);
+        assert.throws(
+            () => createLlmFromEnv(),
+            /OPENAI_API_KEY is required when LLM_PROVIDER=openai/,
+        );
     });
 
     await t.test('creates AnthropicLlm when provider is anthropic and key is present', () => {
@@ -49,11 +52,13 @@ test('llmFactory', async (t) => {
         assert.ok(llm instanceof AnthropicLlm);
     });
 
-    await t.test('creates MockLlm when provider is anthropic but key is missing', () => {
+    await t.test('throws when provider is anthropic but key is missing', () => {
         process.env.LLM_PROVIDER = 'anthropic';
         delete process.env.ANTHROPIC_API_KEY;
-        const llm = createLlmFromEnv();
-        assert.ok(llm instanceof MockLlm);
+        assert.throws(
+            () => createLlmFromEnv(),
+            /ANTHROPIC_API_KEY is required when LLM_PROVIDER=anthropic/,
+        );
     });
 
     await t.test('creates MockLlm when provider is mock', () => {
@@ -62,10 +67,12 @@ test('llmFactory', async (t) => {
         assert.ok(llm instanceof MockLlm);
     });
 
-    await t.test('creates NullLlm for unknown provider', () => {
+    await t.test('throws for unknown provider', () => {
         process.env.LLM_PROVIDER = 'unknown-provider';
-        const llm = createLlmFromEnv();
-        assert.ok(llm instanceof NullLlm);
+        assert.throws(
+            () => createLlmFromEnv(),
+            /Unsupported LLM_PROVIDER "unknown-provider"/,
+        );
     });
 
     await t.test('is case insensitive for provider name', () => {
@@ -81,10 +88,12 @@ test('llmFactory', async (t) => {
         assert.ok(llm instanceof GeminiLlm);
     });
 
-    await t.test('creates MockLlm when provider is gemini but key is missing', () => {
+    await t.test('throws when provider is gemini but key is missing', () => {
         process.env.LLM_PROVIDER = 'gemini';
         delete process.env.GEMINI_API_KEY;
-        const llm = createLlmFromEnv();
-        assert.ok(llm instanceof MockLlm);
+        assert.throws(
+            () => createLlmFromEnv(),
+            /GEMINI_API_KEY is required when LLM_PROVIDER=gemini/,
+        );
     });
 });

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test, beforeEach } from 'node:test';
 import { ConversationManager, DEFAULT_CONVERSATION_CONFIG } from '../src/engine/conversationManager.js';
 import { InMemoryConversationStore } from '../src/stores/inMemoryConversationStore.js';
-import { Entity } from '../src/types.js';
+import { Entity, ToolResult } from '../src/types.js';
 
 test('ConversationManager', async (t) => {
     let manager: ConversationManager;
@@ -107,6 +107,21 @@ test('ConversationManager', async (t) => {
         assert.strictEqual(messages.length, 2); // user + assistant
         assert.strictEqual(messages[0].role, 'user');
         assert.strictEqual(messages[1].role, 'assistant');
+    });
+
+    await t.test('buildMessageHistory includes tool messages from prior turns', async () => {
+        const toolResults: ToolResult[] = [
+            { name: 'query-metrics', result: { value: 95, unit: '%' } },
+        ];
+
+        await manager.addTurn('chat-1', 'Check CPU', 'CPU is high', undefined, undefined, toolResults);
+
+        const messages = await manager.buildMessageHistory('chat-1');
+        assert.strictEqual(messages.length, 3);
+        assert.strictEqual(messages[1].role, 'tool');
+        assert.strictEqual(messages[1].toolName, 'query-metrics');
+        assert.ok(messages[1].content.includes('95'));
+        assert.strictEqual(messages[2].role, 'assistant');
     });
 
     await t.test('deleteConversation removes conversation', async () => {

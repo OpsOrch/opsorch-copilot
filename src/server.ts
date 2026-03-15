@@ -3,6 +3,10 @@ import { CopilotEngine } from "./engine/copilotEngine.js";
 import { createLlmFromEnv } from "./llmFactory.js";
 import { Conversation } from "./types.js";
 
+function formatErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /**
  * Build a preview string for a conversation.
  * Prioritizes the most recent assistant response over user messages.
@@ -39,7 +43,7 @@ export function buildPreview(conversation: Conversation): string {
     console.error(
       "Error building preview for conversation",
       conversation.chatId,
-      error,
+      formatErrorMessage(error),
     );
     return "Preview unavailable";
   }

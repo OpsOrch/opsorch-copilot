@@ -155,7 +155,7 @@ export class CopilotEngine {
 
     // Step 1: Check cache for each call
     for (const call of calls) {
-      const cached = this.resultCache.get(call);
+      const cached = this.resultCache.get(call, chatId);
       if (cached) {
         console.log(
           `[Copilot][${chatId}] Using cached result for ${call.name}`,
@@ -233,7 +233,7 @@ export class CopilotEngine {
 
         // Only cache if not an error
         if (!isError) {
-          this.resultCache.set(callsToExecute[i], result);
+          this.resultCache.set(callsToExecute[i], result, chatId);
         }
 
         // Record tool execution in trace
@@ -304,6 +304,7 @@ export class CopilotEngine {
     const resolutions = await this.referenceResolver.resolveReferences(
       question,
       entityContext,
+      conversationTurns,
     );
     const resolvedQuestion = this.referenceResolver.applyResolutions(
       question,
@@ -421,6 +422,7 @@ export class CopilotEngine {
 
       // Limit calls
       plannedCalls = this.limitToolCalls(plannedCalls);
+      this.executionTracer.updateIterationPlan(trace, plannedCalls);
 
       // Track if any calls were ever planned (before toolRunner filtering)
       if (plannedCalls.length > 0) {
@@ -563,6 +565,7 @@ export class CopilotEngine {
       answer.conclusion,
       allExtractedEntities,
       turnTrace,
+      allResults,
     );
 
     // Step 8: Generate conversation name for new conversations only

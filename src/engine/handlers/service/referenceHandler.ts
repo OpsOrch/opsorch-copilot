@@ -42,6 +42,15 @@ export const serviceReferenceHandler: ReferenceHandler = async (
         let servicesArray: Array<Record<string, unknown>> = [];
         if (Array.isArray(content)) {
           servicesArray = content as Array<Record<string, unknown>>;
+        } else if (
+          typeof content === "object" &&
+          content !== null &&
+          Array.isArray((content as Record<string, unknown>).services)
+        ) {
+          servicesArray = (content as { services: Array<Record<string, unknown> | string> }).services
+            .map((service) =>
+              typeof service === "string" ? { name: service } : service,
+            );
         } else if (typeof content === "object" && content !== null) {
           servicesArray = [content as Record<string, unknown>];
         }

@@ -47,18 +47,21 @@ function mapMessagesForAnthropic(messages: LlmMessage[]): {
   messages: Array<{ role: string; content: string }>;
 } {
   const systemMessages = messages.filter((m) => m.role === "system");
-  const nonSystemMessages = messages.filter(
-    (m) => m.role !== "system" && m.role !== "tool",
-  );
+  const nonSystemMessages = messages.filter((m) => m.role !== "system");
 
   const system = systemMessages.map((m) => m.content).join("\n\n") || undefined;
 
   const anthropicMessages = nonSystemMessages.map((m) => ({
     role: m.role === "assistant" ? "assistant" : "user",
-    content: m.content,
+    content: m.role === "tool" ? formatToolMessage(m) : m.content,
   }));
 
   return { system, messages: anthropicMessages };
+}
+
+function formatToolMessage(message: LlmMessage): string {
+  const toolName = message.toolName || "unknown-tool";
+  return `Tool result from ${toolName}:\n${message.content}`;
 }
 
 /**
@@ -128,4 +131,3 @@ export class AnthropicLlm implements LlmClient {
     };
   }
 }
-

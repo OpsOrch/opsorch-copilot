@@ -156,6 +156,7 @@ test('ParallelToolRunner: executes independent tools in parallel', async () => {
 test('ParallelToolRunner: executes dependent tools in correct order', async () => {
   const runner = new ParallelToolRunner();
   const executionOrder: string[] = [];
+  let timelineArgs: ToolCall['arguments'] | undefined;
 
   const mcp = new MockMcp(
     async () => [
@@ -164,6 +165,12 @@ test('ParallelToolRunner: executes dependent tools in correct order', async () =
     ],
     async (call) => {
       executionOrder.push(call.name);
+      if (call.name === 'query-incidents') {
+        return { name: call.name, result: [{ id: 'INC-123' }] };
+      }
+      if (call.name === 'get-incident-timeline') {
+        timelineArgs = call.arguments;
+      }
       return { name: call.name, result: { ok: true } };
     }
   );
@@ -187,6 +194,7 @@ test('ParallelToolRunner: executes dependent tools in correct order', async () =
   // query-incidents must execute before get-incident-timeline
   assert.equal(executionOrder[0], 'query-incidents');
   assert.equal(executionOrder[1], 'get-incident-timeline');
+  assert.deepEqual(timelineArgs, { id: 'INC-123' });
 });
 
 test('ParallelToolRunner: handles mixed parallel and sequential execution', async () => {

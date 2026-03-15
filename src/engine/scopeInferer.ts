@@ -300,6 +300,14 @@ export class ScopeInferer {
       hasScope = true;
     }
 
+    const serviceMatch = question.match(
+      /\b((?:svc-[a-z0-9-]+)|(?:[a-z0-9][a-z0-9-]+-(?:service|svc|api)))\b/i,
+    );
+    if (serviceMatch) {
+      scope.service = serviceMatch[1].toLowerCase();
+      hasScope = true;
+    }
+
     if (hasScope) {
       return {
         scope,

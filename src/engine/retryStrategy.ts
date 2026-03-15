@@ -28,6 +28,10 @@ export class CircuitBreakerError extends Error {
   }
 }
 
+function formatErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /**
  * Determines if an error is transient and should be retried.
  */
@@ -182,8 +186,7 @@ export async function withRetry<T>(
 
       if (!isTransientError(error)) {
         console.warn(
-          `[Retry]${context ? ` [${context}]` : ""} Non-transient error, not retrying:`,
-          error,
+          `[Retry]${context ? ` [${context}]` : ""} Non-transient error, not retrying: ${formatErrorMessage(error)}`,
         );
         throw error;
       }

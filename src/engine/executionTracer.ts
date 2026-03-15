@@ -40,6 +40,16 @@ export class ExecutionTracer {
   }
 
   /**
+   * Update the current iteration plan after heuristics/refinement.
+   */
+  updateIterationPlan(trace: ExecutionTrace, plannedTools: ToolCall[]): void {
+    const currentIteration = this.getCurrentIteration(trace);
+    if (currentIteration) {
+      currentIteration.plannedTools = [...plannedTools];
+    }
+  }
+
+  /**
    * Record a heuristic modification
    */
   recordHeuristic(

@@ -26,6 +26,15 @@ export const serviceEntityHandler: EntityHandler = async (
   // Handle array of services (query-services returns z.array(serviceSchema))
   if (Array.isArray(toolResult.result)) {
     services = toolResult.result as JsonObject[];
+  } else if (
+    typeof toolResult.result === "object" &&
+    toolResult.result !== null &&
+    Array.isArray((toolResult.result as JsonObject).services)
+  ) {
+    services = ((toolResult.result as JsonObject).services as Array<JsonObject | string>).map(
+      (service) =>
+        typeof service === "string" ? ({ name: service } as JsonObject) : service,
+    );
   } else {
     // Single service
     services = [toolResult.result as JsonObject];
