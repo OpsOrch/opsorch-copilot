@@ -100,7 +100,7 @@ test("gemini", async (t) => {
                 const requestData = JSON.parse(jsonMatch[0]);
                 assert.strictEqual(
                     requestData.model,
-                    "gemini-3-flash-preview",
+                    "gemini-3.1-pro-preview",
                     "Should log correct model name",
                 );
                 assert.strictEqual(

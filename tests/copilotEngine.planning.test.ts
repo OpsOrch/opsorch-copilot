@@ -249,6 +249,84 @@ test('stops loop when max iterations reached', async () => {
   assert.equal(toolCallCount, 2, `Expected 2 tool calls but got ${toolCallCount}`);
 });
 
+test('stops and synthesizes when follow-up planner returns no tool calls on third iteration', async () => {
+  let plannerCalls = 0;
+  const llm: LlmClient = {
+    async chat(_messages: LlmMessage[], tools: Tool[]) {
+      if (tools.length) {
+        plannerCalls += 1;
+        if (plannerCalls === 1) {
+          return {
+            content: 'plan1',
+            toolCalls: [{ name: 'query-incidents', arguments: { limit: 1 } }],
+          };
+        }
+        if (plannerCalls === 2) {
+          return {
+            content: 'plan2',
+            toolCalls: [{ name: 'get-incident-timeline', arguments: { id: 'INC-1' } }],
+          };
+        }
+        return {
+          content: 'satisfied',
+          toolCalls: [],
+        };
+      }
+
+      return {
+        content: JSON.stringify({ conclusion: 'done', evidence: [] }),
+        toolCalls: [],
+      };
+    },
+  };
+
+  const calls: ToolCall[] = [];
+  const mcp: StubMcp = {
+    async listTools() {
+      return [
+        { name: 'query-incidents' } as Tool,
+        { name: 'get-incident-timeline' } as Tool,
+        { name: 'query-orchestration-plans' } as Tool,
+      ];
+    },
+    async callTool(call) {
+      calls.push(call);
+      if (call.name === 'query-incidents') {
+        return {
+          name: call.name,
+          arguments: call.arguments,
+          result: [{ id: 'INC-1', status: 'open', service: 'checkout' }],
+        };
+      }
+      if (call.name === 'get-incident-timeline') {
+        return {
+          name: call.name,
+          arguments: call.arguments,
+          result: [{ at: '2024-01-01T00:00:00Z', kind: 'event' }],
+        };
+      }
+      if (call.name === 'query-orchestration-plans') {
+        return {
+          name: call.name,
+          arguments: call.arguments,
+          result: [{ id: 'plan-1' }],
+        };
+      }
+      return { name: call.name, arguments: call.arguments, result: null };
+    },
+  };
+
+  const engine = makeEngine(llm, mcp, { maxIterations: 5 });
+  await engine.answer('Investigate the open checkout incident');
+
+  assert.deepEqual(calls.map((call) => call.name), [
+    'query-incidents',
+    'get-incident-timeline',
+    'query-orchestration-plans',
+  ]);
+  assert.equal(plannerCalls, 3);
+});
+
 test('skips placeholder args and reports missing data', async () => {
   const llm: LlmClient = {
     async chat(_messages: LlmMessage[] = [], _tools: Tool[] = [], _opts?: { chatId?: string }) {

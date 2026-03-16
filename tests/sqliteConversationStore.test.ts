@@ -4,7 +4,9 @@ import { mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { SqliteConversationStore } from '../src/stores/sqliteConversationStore.js';
-import { Conversation, ConversationConfig } from '../src/types.js';
+import { Conversation, ConversationConfig, JsonObject } from '../src/types.js';
+
+type ErrorWithCause = Error & { cause?: unknown };
 
 /**
  * Helper to create a temporary database for testing.
@@ -587,7 +589,7 @@ describe('SqliteConversationStore', () => {
                 
                 // Construct a circular error specifically to mimic unhandled fetch exceptions
                 const fetchError = new Error("fetch failed");
-                (fetchError as any).cause = fetchError; // Create circular reference
+                (fetchError as ErrorWithCause).cause = fetchError; // Create circular reference
                 
                 conversation.turns.push({
                     userMessage: 'Trigger complex log payload',
@@ -596,7 +598,7 @@ describe('SqliteConversationStore', () => {
                     toolResults: [{
                         name: 'fetch-tool',
                         // BigInt and circular error mimic exact payloads that crash JSON.stringify
-                        result: { count: BigInt(9007199254740991n), error: fetchError } as any
+                        result: { count: BigInt(9007199254740991n), error: fetchError } as unknown as JsonObject
                     }]
                 });
 
@@ -607,11 +609,15 @@ describe('SqliteConversationStore', () => {
                 
                 // Assert BigInt was safely stringified to string
                 const complexTurn = retrieved?.turns[1];
-                const complexResult = complexTurn?.toolResults?.[0].result as any;
+                const complexResult = complexTurn?.toolResults?.[0].result as JsonObject;
                 
                 assert.strictEqual(complexResult.count, "9007199254740991");
-                assert.strictEqual(complexResult.error.message, "fetch failed");
-                assert.strictEqual(complexResult.error.cause, "[Circular]");
+                assert.deepStrictEqual(complexResult.error, {
+                    name: 'Error',
+                    message: 'fetch failed',
+                    stack: complexResult.error && typeof complexResult.error === 'object' && 'stack' in complexResult.error ? complexResult.error.stack : undefined,
+                    cause: '[Circular]'
+                });
 
                 await store.close();
             } finally {

@@ -332,7 +332,7 @@ function safeStringify(value: unknown): string {
       }
       return val;
     });
-  } catch (err) {
+  } catch {
     return String(value);
   }
 }
