@@ -12,7 +12,7 @@ import { withRetry } from "../engine/retryStrategy.js";
 
 const OPENAI_BASE_URL =
   process.env.OPENAI_BASE_URL || "https://api.openai.com/v1";
-const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.1";
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5-nano";
 
 const RESPONSES_URL = `${OPENAI_BASE_URL.replace(/\/+$/, "")}/responses`;
 

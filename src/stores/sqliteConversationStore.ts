@@ -30,6 +30,8 @@ interface CountRow {
   count: number;
 }
 
+type ErrorWithCause = Error & { cause?: unknown };
+
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -302,15 +304,18 @@ export class SqliteConversationStore implements ConversationStore {
         const errorCache = new Set();
         turnsJson = JSON.stringify(conversation.turns, (key, value) => {
           if (value instanceof Error) {
+            const errorWithCause = value as ErrorWithCause;
             if (errorCache.has(value)) {
               return "[Circular]";
             }
             errorCache.add(value);
-            return { 
-              name: value.name, 
-              message: value.message, 
+            return {
+              name: value.name,
+              message: value.message,
               stack: value.stack,
-              ...((value as any).cause ? { cause: (value as any).cause } : {})
+              ...(errorWithCause.cause !== undefined
+                ? { cause: errorWithCause.cause }
+                : {}),
             };
           }
           if (typeof value === "bigint") {

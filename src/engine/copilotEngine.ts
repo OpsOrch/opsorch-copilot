@@ -330,6 +330,7 @@ export class CopilotEngine {
     let iteration = 0;
     let isFirstIteration = true;
     let hadPlannedCalls = false;
+    let shouldStopForSatisfiedPlanner = false;
 
     // Step 4: Reasoning Loop
     while (iteration < this.maxIterations) {
@@ -391,28 +392,37 @@ export class CopilotEngine {
         );
         plannedCalls = plan.toolCalls ?? [];
 
+        if (iteration >= 3 && plannedCalls.length === 0) {
+          console.log(
+            `[Copilot][${chatId}] Follow-up planner returned no tool calls on iteration ${iteration}. Treating this as satisfied and stopping for synthesis.`,
+          );
+          shouldStopForSatisfiedPlanner = true;
+        }
+
         // Record iteration start with planned tools
         this.executionTracer.startIteration(trace, plannedCalls);
 
-        // Apply follow-up heuristics
-        const beforeHeuristics = plannedCalls.length;
-        const followUpSuggestions = await this.followUpEngine.applyFollowUps(
-          formattedResults,
-          chatId,
-          conversationTurns,
-          questionForPlanning,
-          plannedCalls,
-        );
-        plannedCalls.push(...followUpSuggestions);
+        if (!shouldStopForSatisfiedPlanner) {
+          // Apply follow-up heuristics
+          const beforeHeuristics = plannedCalls.length;
+          const followUpSuggestions = await this.followUpEngine.applyFollowUps(
+            formattedResults,
+            chatId,
+            conversationTurns,
+            questionForPlanning,
+            plannedCalls,
+          );
+          plannedCalls.push(...followUpSuggestions);
 
-        // Record heuristic modifications
-        if (plannedCalls.length !== beforeHeuristics) {
-          this.executionTracer.recordHeuristic(trace, {
-            heuristicName: "followUpHeuristics",
-            action: "modify",
-            reason: "Applied context-aware follow-up heuristics",
-            affectedTools: plannedCalls.map((c) => c.name),
-          });
+          // Record heuristic modifications
+          if (plannedCalls.length !== beforeHeuristics) {
+            this.executionTracer.recordHeuristic(trace, {
+              heuristicName: "followUpHeuristics",
+              action: "modify",
+              reason: "Applied context-aware follow-up heuristics",
+              affectedTools: plannedCalls.map((c) => c.name),
+            });
+          }
         }
       }
 

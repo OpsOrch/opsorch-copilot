@@ -9,7 +9,7 @@ import {
 } from "../types.js";
 
 const GEMINI_MODEL =
-    process.env.GEMINI_MODEL || "gemini-3-flash-preview";
+    process.env.GEMINI_MODEL || "gemini-3.1-pro-preview";
 
 /**
  * Map internal Tool definitions to Gemini function declarations format.
